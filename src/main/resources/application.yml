@@ -16,7 +16,6 @@ spring:
   application:
     name: demo
 
-# AI 配置（真实 Key 请写在 application-local.yml 中，不要提交到 Git）
 ai:
   api:
     key: ${AI_API_KEY:}
