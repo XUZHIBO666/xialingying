@@ -125,7 +125,7 @@ public class WeatherCLI {
         System.out.println("╔══════════════════════════════════════════════╗");
         System.out.println("║         🌤  Weather CLI  v1.0.0              ║");
         System.out.println("║         基于 Open-Meteo 免费天气 API         ║");
-        System.out.println("╠══════════════════════════════════════════════╣");
+        System.out.println("═══════════════════════════════════════════════╣");
         System.out.println("║  输入 'help' 查看所有命令                    ║");
         System.out.println("║  输入 'exit' 退出程序                        ║");
         System.out.println("╚══════════════════════════════════════════════╝");
@@ -201,7 +201,7 @@ public class WeatherCLI {
             System.err.println("╔══════════════════════════════════════════════╗");
             System.err.println("║  ⚠  错误 [" + e.getErrorCode().getCode() + "] "
                 + padRight(e.getErrorCode().getDescription(), 28) + "║");
-            System.err.println("╠══════════════════════════════════════════════╣");
+            System.err.println("═══════════════════════════════════════════════╣");
             for (String line : e.getMessage().split("\n")) {
                 System.err.println("║  " + padRight(line, 42) + "║");
             }
