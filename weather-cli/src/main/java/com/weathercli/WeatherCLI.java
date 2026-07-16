@@ -2,8 +2,7 @@ package com.weathercli;
 
 import com.weathercli.command.*;
 import com.weathercli.exception.CLIException;
-import com.weathercli.service.ModelService;
-import com.weathercli.service.WeatherService;
+import com.weathercli.service.*;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,6 +22,8 @@ import java.util.logging.*;
  *   - status   显示运行状态
  *   - weather  查询城市天气 (调用 Open-Meteo 免费 API)
  *   - models   查看可用的 AI 模型及 API Key 申请指引
+ *   - ask      向 AI 大模型提问 (需配置 API Key)
+ *   - ilink    微信 iLink Bot 管理 (扫码登录/消息收发)
  *   - exit     退出程序
  */
 public class WeatherCLI {
@@ -32,17 +33,23 @@ public class WeatherCLI {
     private final Map<String, Command> commands = new LinkedHashMap<>();
     private final WeatherService weatherService;
     private final ModelService modelService;
+    private final AIService aiService;
+    private final ILinkService ilinkService;
     private boolean running = true;
 
     public WeatherCLI() {
         this.weatherService = new WeatherService();
         this.modelService = new ModelService();
+        this.aiService = new AIService();
+        this.ilinkService = new ILinkService();
 
         // 注册所有命令
         registerCommand(new VersionCommand());
         registerCommand(new StatusCommand(weatherService));
         registerCommand(new WeatherCommand(weatherService));
         registerCommand(new ModelsCommand(modelService));
+        registerCommand(new AskCommand(aiService));
+        registerCommand(new ILinkCommand(ilinkService));
         // HelpCommand 需要 commands map 引用，在注册完成后设置
     }
 
@@ -64,6 +71,12 @@ public class WeatherCLI {
         WeatherCLI cli = new WeatherCLI();
         // 在所有命令注册完成后设置 HelpCommand
         cli.commands.put("help", new HelpCommand(cli.commands));
+
+        // 注册 JVM 关闭钩子，确保 iLink 连接正常释放
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            cli.ilinkService.disconnect();
+            LOG.info("JVM 关闭钩子: 资源已释放");
+        }));
 
         // 打印启动横幅
         cli.printBanner();
