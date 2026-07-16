@@ -113,7 +113,6 @@ public class WeatherCLI {
         for (Handler handler : rootLogger.getHandlers()) {
             handler.setFormatter(new LogFormatter());
         }
-        // 也设置全局 logger
         Logger globalLogger = Logger.getLogger(WeatherCLI.class.getPackageName());
         globalLogger.setUseParentHandlers(true);
     }
@@ -126,7 +125,7 @@ public class WeatherCLI {
         System.out.println("╔══════════════════════════════════════════════╗");
         System.out.println("║         🌤  Weather CLI  v1.0.0              ║");
         System.out.println("║         基于 Open-Meteo 免费天气 API         ║");
-        System.out.println("╠══════════════════════════════════════════════╣");
+        System.out.println("═══════════════════════════════════════════════╣");
         System.out.println("║  输入 'help' 查看所有命令                    ║");
         System.out.println("║  输入 'exit' 退出程序                        ║");
         System.out.println("╚══════════════════════════════════════════════╝");
@@ -197,14 +196,12 @@ public class WeatherCLI {
             cmd.execute(args);
 
         } catch (CLIException e) {
-            // 简洁日志（控制台 + 文件），堆栈不对外暴露
             LOG.warning("[" + e.getErrorCode() + "] " + e.getMessage());
             System.err.println();
             System.err.println("╔══════════════════════════════════════════════╗");
             System.err.println("║  ⚠  错误 [" + e.getErrorCode().getCode() + "] "
                 + padRight(e.getErrorCode().getDescription(), 28) + "║");
-            System.err.println("╠══════════════════════════════════════════════╣");
-            // 多行错误消息
+            System.err.println("═══════════════════════════════════════════════╣");
             for (String line : e.getMessage().split("\n")) {
                 System.err.println("║  " + padRight(line, 42) + "║");
             }
@@ -212,7 +209,6 @@ public class WeatherCLI {
             System.err.println();
 
         } catch (Exception e) {
-            // 堆栈详情仅写入日志文件，控制台不显示
             LOG.log(Level.SEVERE, "未预期的异常: " + e, e);
             System.err.println();
             System.err.println("┌──────────────────────────────────────────────┐");
@@ -230,7 +226,6 @@ public class WeatherCLI {
      * 解析命令行输入（处理引号内的空格）。
      */
     private String[] parseCommandLine(String line) {
-        // 简单实现：按空格分割，但保留引号内容
         java.util.List<String> tokens = new java.util.ArrayList<>();
         boolean inQuotes = false;
         StringBuilder current = new StringBuilder();
@@ -259,7 +254,6 @@ public class WeatherCLI {
     }
 
     private static String padRight(String s, int n) {
-        // 处理中文字符宽度（粗略算为 2 个英文字符）
         int len = 0;
         for (char c : s.toCharArray()) {
             len += (c > 127) ? 2 : 1;
@@ -268,10 +262,8 @@ public class WeatherCLI {
         return s + (padding > 0 ? " ".repeat(padding) : "");
     }
 
-    // ---- 日志格式化器 ----
-
     /**
-     * 自定义日志格式化器，带时间戳和级别颜色标记。
+     * 自定义日志格式化器，带时间戳。
      */
     public static class LogFormatter extends Formatter {
 
@@ -282,17 +274,9 @@ public class WeatherCLI {
         public String format(LogRecord record) {
             StringBuilder sb = new StringBuilder();
 
-            // 时间戳
-            sb.append("[")
-                .append(LocalDateTime.now().format(DT_FORMAT))
-                .append("] ");
+            sb.append("[").append(LocalDateTime.now().format(DT_FORMAT)).append("] ");
+            sb.append("[").append(record.getLevel().getLocalizedName()).append("] ");
 
-            // 日志级别
-            sb.append("[")
-                .append(record.getLevel().getLocalizedName())
-                .append("] ");
-
-            // 类名和方法
             String source = record.getSourceClassName();
             if (source != null) {
                 sb.append(source.substring(source.lastIndexOf('.') + 1));
@@ -302,10 +286,8 @@ public class WeatherCLI {
             }
             sb.append(" - ");
 
-            // 消息
             sb.append(formatMessage(record));
 
-            // 异常
             if (record.getThrown() != null) {
                 sb.append(System.lineSeparator());
                 sb.append("  Exception: ").append(record.getThrown().toString());
