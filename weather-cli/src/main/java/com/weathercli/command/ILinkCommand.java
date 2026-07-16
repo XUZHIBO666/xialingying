@@ -1,6 +1,7 @@
 package com.weathercli.command;
 
 import com.weathercli.exception.CLIException;
+import com.weathercli.service.AIService;
 import com.weathercli.service.ILinkService;
 
 import java.io.File;
@@ -31,9 +32,16 @@ public class ILinkCommand implements Command {
     private static final Logger LOG = Logger.getLogger(ILinkCommand.class.getName());
 
     private final ILinkService ilinkService;
+    private final AIService aiService;
 
-    public ILinkCommand(ILinkService ilinkService) {
+    // 自动回复状态
+    private enum AutoReplyMode { OFF, FIXED, AI }
+    private volatile AutoReplyMode autoReplyMode = AutoReplyMode.OFF;
+    private volatile String autoReplyMessage = null;
+
+    public ILinkCommand(ILinkService ilinkService, AIService aiService) {
         this.ilinkService = ilinkService;
+        this.aiService = aiService;
     }
 
     @Override
@@ -98,10 +106,21 @@ public class ILinkCommand implements Command {
             case "info":
                 showInfo();
                 break;
+            case "autoreply":
+                if (args.length < 2) {
+                    throw new CLIException(CLIException.ErrorCode.MISSING_ARGUMENT,
+                        "用法: ilink autoreply <消息|ai|off|status>\n"
+                        + "  ilink autoreply 你好，我现在忙，稍后回复  设置固定回复\n"
+                        + "  ilink autoreply ai                         开启 AI 智能回复\n"
+                        + "  ilink autoreply off                        关闭自动回复\n"
+                        + "  ilink autoreply status                     查看当前状态");
+                }
+                doAutoReply(args);
+                break;
             default:
                 throw new CLIException(CLIException.ErrorCode.INVALID_COMMAND,
                     "未知子命令: " + subCommand + "\n"
-                    + "可用: login, logout, status, send, reply, listen, info");
+                    + "可用: login, logout, status, send, reply, listen, info, autoreply");
         }
     }
 
@@ -333,6 +352,7 @@ public class ILinkCommand implements Command {
         System.out.println("│    ilink send     - 发送消息                  │");
         System.out.println("│    ilink reply    - 回复消息                  │");
         System.out.println("│    ilink listen   - 监听消息                  │");
+        System.out.println("│    ilink autoreply - 自动回复                 │");
         System.out.println("│    ilink info     - 协议信息                  │");
         System.out.println("└──────────────────────────────────────────────┘");
         System.out.println();
@@ -344,6 +364,71 @@ public class ILinkCommand implements Command {
         LOG.info("ilink send → " + userId + ": " + message);
         ilinkService.sendText(userId, message);
         System.out.println("✅ 消息已发送 → " + userId);
+    }
+
+    // ---- 自动回复 ----
+
+    private void doAutoReply(String[] args) throws CLIException {
+        String mode = args[1].toLowerCase();
+
+        switch (mode) {
+            case "off":
+                autoReplyMode = AutoReplyMode.OFF;
+                autoReplyMessage = null;
+                System.out.println("🔕 自动回复已关闭");
+                break;
+
+            case "ai":
+                if (!aiService.isAvailable()) {
+                    throw new CLIException(CLIException.ErrorCode.CONFIG_ERROR,
+                        "AI 自动回复需要先配置 API Key！\n"
+                        + "请编辑 src/main/resources/config.properties 设置:\n"
+                        + "  deepseek.api.key=sk-xxx\n"
+                        + "或设置环境变量: DEEPSEEK_API_KEY=sk-xxx");
+                }
+                autoReplyMode = AutoReplyMode.AI;
+                autoReplyMessage = null;
+                System.out.println("🤖 AI 智能自动回复已开启");
+                System.out.println("   使用 'ilink listen' 开始监听，收到消息会自动调用 AI 回复");
+                break;
+
+            case "status":
+                System.out.println();
+                System.out.println("┌──────────────────────────────────────────────┐");
+                System.out.println("│  📡 自动回复状态                              │");
+                System.out.println("├──────────────────────────────────────────────┤");
+                switch (autoReplyMode) {
+                    case OFF:
+                        System.out.println("│  状态:   已关闭                               │");
+                        break;
+                    case FIXED:
+                        System.out.println("│  模式:   固定消息                             │");
+                        System.out.println("│  消息:   " + autoReplyMessage);
+                        break;
+                    case AI:
+                        System.out.println("│  模式:   AI 智能回复                          │");
+                        System.out.println("│  模型:   " + (aiService.isAvailable() ? "已配置" : "未配置"));
+                        break;
+                }
+                System.out.println("└──────────────────────────────────────────────┘");
+                System.out.println();
+                break;
+
+            default:
+                // 当作固定回复消息
+                String msg = String.join(" ", args);
+                // 去掉 "autoreply" 前缀
+                if (msg.toLowerCase().startsWith("autoreply ")) {
+                    msg = msg.substring("autoreply ".length());
+                }
+                autoReplyMode = AutoReplyMode.FIXED;
+                autoReplyMessage = msg;
+                System.out.println("📝 自动回复已设置:");
+                System.out.println("   \"" + autoReplyMessage + "\"");
+                System.out.println();
+                System.out.println("   使用 'ilink listen' 开始监听，收到消息会自动回复");
+                break;
+        }
     }
 
     // ---- 监听消息 ----
@@ -365,13 +450,41 @@ public class ILinkCommand implements Command {
         // 线程安全的 userId 持有者，用于在监听回调线程和主线程之间传递
         AtomicReference<String> lastUserId = new AtomicReference<>();
 
-        // 注册消息处理器
+        // 注册消息处理器（含自动回复）
         ILinkService.MessageListener listener = (userId, text, contextToken) -> {
             lastUserId.set(userId);  // 记住最后发消息的用户
             System.out.println();
             System.out.println("📩 收到消息 [" + userId + "]:");
             System.out.println("   " + text);
-            System.out.print("💬 输入回复内容 (回车跳过) > ");
+
+            // ---- 自动回复 ----
+            if (autoReplyMode == AutoReplyMode.FIXED && autoReplyMessage != null) {
+                try {
+                    ilinkService.reply(userId, autoReplyMessage);
+                    System.out.println("   🤖 已自动回复: \"" + autoReplyMessage + "\"");
+                    lastUserId.set(null); // 自动回复后清除，避免重复
+                } catch (CLIException e) {
+                    System.out.println("   ❌ 自动回复失败: " + e.getMessage());
+                }
+            } else if (autoReplyMode == AutoReplyMode.AI) {
+                System.out.println("   🤖 AI 思考中，请稍候...");
+                try {
+                    String aiReply = aiService.chat(text);
+                    ilinkService.reply(userId, aiReply);
+                    System.out.println("   🤖 AI 已自动回复: \""
+                        + (aiReply.length() > 50 ? aiReply.substring(0, 50) + "..." : aiReply) + "\"");
+                    lastUserId.set(null); // 自动回复后清除
+                } catch (CLIException e) {
+                    System.out.println("   ❌ AI 自动回复失败: " + e.getMessage());
+                }
+            }
+
+            // 如果自动回复已处理，不再提示手动回复
+            if (autoReplyMode != AutoReplyMode.OFF && lastUserId.get() == null) {
+                System.out.println();
+            } else {
+                System.out.print("💬 输入回复内容 (回车跳过) > ");
+            }
         };
 
         ilinkService.addMessageListener(listener);

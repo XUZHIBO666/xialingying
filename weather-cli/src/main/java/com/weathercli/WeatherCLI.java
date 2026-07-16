@@ -49,7 +49,7 @@ public class WeatherCLI {
         registerCommand(new WeatherCommand(weatherService));
         registerCommand(new ModelsCommand(modelService));
         registerCommand(new AskCommand(aiService));
-        registerCommand(new ILinkCommand(ilinkService));
+        registerCommand(new ILinkCommand(ilinkService, aiService));
         // HelpCommand 需要 commands map 引用，在注册完成后设置
     }
 
