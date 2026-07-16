@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.demo: DEBUG
+    com.xzb: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    path: ./logs
+
+spring:
+  application:
+    name: demo
+
+# AI 配置（真实 Key 请写在 application-local.yml 中，不要提交到 Git）
+ai:
+  api:
+    key: ${AI_API_KEY:}
+    url: https://api.deepseek.com
+  model: deepseek-chat
+  system-prompt: 你是一个友好的微信助手，用简洁的中文回复，不要超过200字。

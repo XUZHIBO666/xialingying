@@ -1,0 +1,7 @@
+# 本地开发配置模板
+# 使用方法：复制此文件 → 粘贴并改名为 application-local.yml → 填入真实 Key
+# application-local.yml 已在 .gitignore 中，不会提交到 Git
+
+ai:
+  api:
+    key: your-api-key-here
