@@ -55,6 +55,7 @@ public class ILinkService {
     private volatile String botToken;
     private volatile String botId;
     private volatile String qrCodeContent;
+    private volatile String qrImgContent;    // base64 编码的二维码图片或登录 URL
     private String updatesCursor = "";       // 游标，用于长轮询
     private final Map<String, String> contextTokenCache = new ConcurrentHashMap<>(); // userId → contextToken
 
@@ -101,12 +102,18 @@ public class ILinkService {
 
             JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
             qrCodeContent = getJsonString(json, "qrcode");
-            String qrImgContent = getJsonString(json, "qrcode_img_content");
+            qrImgContent = getJsonString(json, "qrcode_img_content");
 
             state = ILinkState.WAITING_FOR_SCAN;
             LOG.info("二维码获取成功，等待扫码...");
 
-            return qrImgContent != null ? qrImgContent : qrCodeContent;
+            // 返回 qrImgContent（二维码实际编码的 URL），
+            // 如果为空则回退到 qrCodeContent（token）
+            String result = (qrImgContent != null && !qrImgContent.isEmpty())
+                ? qrImgContent : qrCodeContent;
+            LOG.info("二维码数据 (前80字符): "
+                + (result != null ? result.substring(0, Math.min(80, result.length())) : "null"));
+            return result;
 
         } catch (IOException e) {
             LOG.severe("获取二维码网络错误: " + e.getMessage());
@@ -494,6 +501,7 @@ public class ILinkService {
     public ILinkState getState() { return state; }
     public String getBotId() { return botId; }
     public String getQrCodeContent() { return qrCodeContent; }
+    public String getQrImgContent() { return qrImgContent; }
     public boolean isConnected() { return state == ILinkState.CONNECTED; }
 
     // ---- 工具方法 ----

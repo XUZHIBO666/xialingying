@@ -3,6 +3,14 @@ package com.weathercli.command;
 import com.weathercli.exception.CLIException;
 import com.weathercli.service.ILinkService;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Base64;
 import java.util.Scanner;
 import java.util.logging.Logger;
 
@@ -102,28 +110,60 @@ public class ILinkCommand implements Command {
         System.out.println("└──────────────────────────────────────────────┘");
         System.out.println();
 
-        String qrContent = ilinkService.getLoginQrCode();
+        // qrData: 二维码中编码的数据，通常是登录确认 URL
+        // qrCodeContent: 用于轮询扫码状态的 session token
+        String qrData = ilinkService.getLoginQrCode();
+        String qrCodeContent = ilinkService.getQrCodeContent();
 
-        // 在控制台显示二维码（ASCII QR）
-        // 也可以生成一个 URL 让用户在浏览器打开
-        System.out.println("📱 请使用微信扫描以下二维码登录:");
-        // 显示二维码提示
-        String shortQr = qrContent.length() > 50
-            ? qrContent.substring(0, 50) + "..."
-            : qrContent;
+        LOG.info("qrData (二维码编码内容): "
+            + (qrData != null ? qrData.substring(0, Math.min(200, qrData.length())) : "null"));
+        LOG.info("qrCodeContent (轮询token): " + qrCodeContent);
 
-        System.out.println();
+        // 判断 qrData 是 URL 还是 base64 图片
+        boolean qrDataIsUrl = qrData != null
+            && (qrData.startsWith("http://") || qrData.startsWith("https://"));
+
+        File qrImageFile = null;
+
+        // 仅当 qrData 看起来像 base64 图片时才尝试保存（>500 字符且非 URL）
+        if (qrData != null && qrData.length() > 500 && !qrDataIsUrl) {
+            qrImageFile = saveQrCodeImage(qrData);
+        }
+
+        // ---- 始终显示在线二维码作为主要方式 ----
         System.out.println("┌──────────────────────────────────────────────┐");
-        System.out.println("│  📱 二维码内容 (可复制到浏览器扫码):         │");
+        System.out.println("│  📱 微信扫码登录                             │");
+        System.out.println("│  复制以下链接到浏览器打开即可看到二维码:      │");
         System.out.println("│                                              │");
-        System.out.println("│  " + shortQr);
-        System.out.println("│                                              │");
-        System.out.println("│  或访问在线生成:                              │");
-        System.out.println("│  https://api.qrserver.com/v1/create-qr-code/ │");
-        System.out.println("│  ?size=200x200&data=" + qrContent.substring(0, Math.min(30, qrContent.length())));
+
+        String encodedData;
+        try {
+            encodedData = URLEncoder.encode(qrData, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            encodedData = qrData;
+        }
+        String qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=" + encodedData;
+
+        System.out.println("│  " + qrUrl);
         System.out.println("│                                              │");
         System.out.println("└──────────────────────────────────────────────┘");
         System.out.println();
+
+        if (qrDataIsUrl) {
+            System.out.println("💡 也可以在微信中直接打开此链接:");
+            System.out.println("   " + qrData);
+            System.out.println();
+        }
+
+        // 本地图片文件作为备用（仅当 base64 图片保存成功时显示）
+        if (qrImageFile != null) {
+            System.out.println("┌──────────────────────────────────────────────┐");
+            System.out.println("│  📱 备用：本地二维码图片                     │");
+            System.out.println("│  文件: " + qrImageFile.getAbsolutePath());
+            System.out.println("│  如在线二维码无法使用，请打开此文件扫码       │");
+            System.out.println("└──────────────────────────────────────────────┘");
+            System.out.println();
+        }
 
         // 等待扫码（60 秒超时）
         System.out.println("⏳ 等待扫码确认 (60秒超时)...");
@@ -134,10 +174,124 @@ public class ILinkCommand implements Command {
             System.out.println();
             System.out.println("提示: 使用 'ilink listen' 开始监听消息");
             System.out.println();
+
+            // 清理临时文件
+            if (qrImageFile != null && qrImageFile.exists()) {
+                qrImageFile.delete();
+            }
         } catch (CLIException e) {
+            // 清理临时文件
+            if (qrImageFile != null && qrImageFile.exists()) {
+                qrImageFile.delete();
+            }
             System.out.println("❌ 登录失败: " + e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * 将 base64 编码的二维码图片保存为临时文件。
+     * 自动检测图片格式（PNG/JPEG/GIF 等），支持标准 base64 和 URL-safe base64。
+     *
+     * @param base64Data base64 图片数据（可能带 data URI 前缀）
+     * @return 保存的临时文件，失败返回 null
+     */
+    private File saveQrCodeImage(String base64Data) {
+        try {
+            String pureBase64 = base64Data;
+            String extension = "png"; // 默认扩展名
+
+            // 处理 data URI 前缀: data:image/png;base64,xxxx
+            if (base64Data.startsWith("data:image/")) {
+                int typeEnd = base64Data.indexOf(';');
+                if (typeEnd > 0) {
+                    String mimeType = base64Data.substring(0, typeEnd);
+                    if (mimeType.contains("jpeg") || mimeType.contains("jpg")) {
+                        extension = "jpg";
+                    } else if (mimeType.contains("gif")) {
+                        extension = "gif";
+                    } else if (mimeType.contains("bmp")) {
+                        extension = "bmp";
+                    } else if (mimeType.contains("webp")) {
+                        extension = "webp";
+                    }
+                }
+                int commaIdx = base64Data.indexOf(',');
+                if (commaIdx > 0) {
+                    pureBase64 = base64Data.substring(commaIdx + 1);
+                }
+            }
+
+            // 去除空白字符（换行、空格等）
+            pureBase64 = pureBase64.replaceAll("\\s+", "");
+
+            // 尝试标准 base64 解码，失败则尝试 URL-safe base64
+            byte[] imageBytes;
+            try {
+                imageBytes = Base64.getDecoder().decode(pureBase64);
+            } catch (IllegalArgumentException e) {
+                LOG.info("标准 Base64 解码失败，尝试 URL-safe Base64...");
+                imageBytes = Base64.getUrlDecoder().decode(pureBase64);
+            }
+
+            LOG.info("二维码图片解码成功，大小: " + imageBytes.length + " 字节");
+
+            // 根据实际文件头检测图片格式
+            String detectedExt = detectImageFormat(imageBytes);
+            if (detectedExt != null) {
+                extension = detectedExt;
+            }
+
+            // 保存到临时目录
+            Path tempDir = Files.createTempDirectory("weather-cli-qr");
+            File qrFile = tempDir.resolve("ilink_qrcode." + extension).toFile();
+            qrFile.deleteOnExit();
+
+            try (FileOutputStream fos = new FileOutputStream(qrFile)) {
+                fos.write(imageBytes);
+            }
+
+            LOG.info("二维码图片已保存: " + qrFile.getAbsolutePath()
+                + " (格式: " + extension + ", 大小: " + imageBytes.length + " 字节)");
+
+            return qrFile;
+        } catch (Exception e) {
+            LOG.warning("保存二维码图片失败: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 根据文件头魔数检测图片格式。
+     */
+    private String detectImageFormat(byte[] bytes) {
+        if (bytes == null || bytes.length < 4) return null;
+
+        // PNG: 89 50 4E 47
+        if (bytes[0] == (byte)0x89 && bytes[1] == (byte)0x50
+            && bytes[2] == (byte)0x4E && bytes[3] == (byte)0x47) {
+            return "png";
+        }
+        // JPEG: FF D8 FF
+        if (bytes[0] == (byte)0xFF && bytes[1] == (byte)0xD8 && bytes[2] == (byte)0xFF) {
+            return "jpg";
+        }
+        // GIF: 47 49 46
+        if (bytes[0] == (byte)0x47 && bytes[1] == (byte)0x49 && bytes[2] == (byte)0x46) {
+            return "gif";
+        }
+        // BMP: 42 4D
+        if (bytes[0] == (byte)0x42 && bytes[1] == (byte)0x4D) {
+            return "bmp";
+        }
+        // WebP: 52 49 46 46 ... 57 45 42 50
+        if (bytes.length >= 12 && bytes[0] == (byte)0x52 && bytes[1] == (byte)0x49
+            && bytes[2] == (byte)0x46 && bytes[3] == (byte)0x46
+            && bytes[8] == (byte)0x57 && bytes[9] == (byte)0x45
+            && bytes[10] == (byte)0x42 && bytes[11] == (byte)0x50) {
+            return "webp";
+        }
+        return null;
     }
 
     // ---- 登出 ----
