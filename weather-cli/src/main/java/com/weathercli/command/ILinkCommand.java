@@ -443,7 +443,23 @@ public class ILinkCommand implements Command {
         System.out.println("┌──────────────────────────────────────────────┐");
         System.out.println("│  👂 开始监听 iLink 消息...                    │");
         System.out.println("│  输入 'stop' 停止监听                        │");
-        System.out.println("│  收到消息时输入回复内容可立即回复            │");
+        System.out.println("├──────────────────────────────────────────────┤");
+
+        // 显示当前自动回复状态
+        switch (autoReplyMode) {
+            case FIXED:
+                System.out.println("│  🤖 自动回复: 固定消息                        │");
+                System.out.println("│     \"" + autoReplyMessage + "\"");
+                break;
+            case AI:
+                System.out.println("│  🤖 自动回复: AI 智能                        │");
+                break;
+            default:
+                System.out.println("│  ⚠ 自动回复: 未开启                          │");
+                System.out.println("│    Type 'autoreply ai' to enable AI replies │");
+                break;
+        }
+        System.out.println("│  收到消息时输入回复内容可手动回复            │");
         System.out.println("└──────────────────────────────────────────────┘");
         System.out.println();
 
