@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import java.util.Scanner;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
 
 /**
@@ -47,7 +48,7 @@ public class ILinkCommand implements Command {
 
     @Override
     public String getUsage() {
-        return "ilink <login|logout|status|send|listen|info>";
+        return "ilink <login|logout|status|send|reply|listen|info>";
     }
 
     @Override
@@ -83,13 +84,24 @@ public class ILinkCommand implements Command {
             case "listen":
                 doListen();
                 break;
+            case "reply":
+                if (args.length < 3) {
+                    throw new CLIException(CLIException.ErrorCode.MISSING_ARGUMENT,
+                        "用法: ilink reply <用户ID> <消息内容>\n"
+                        + "示例: ilink reply o9cq800kum_xxx@im.wechat 你好！");
+                }
+                String replyUserId = args[1];
+                String replyMsg = String.join(" ",
+                    java.util.Arrays.copyOfRange(args, 2, args.length));
+                doSend(replyUserId, replyMsg);
+                break;
             case "info":
                 showInfo();
                 break;
             default:
                 throw new CLIException(CLIException.ErrorCode.INVALID_COMMAND,
                     "未知子命令: " + subCommand + "\n"
-                    + "可用: login, logout, status, send, listen, info");
+                    + "可用: login, logout, status, send, reply, listen, info");
         }
     }
 
@@ -319,6 +331,7 @@ public class ILinkCommand implements Command {
         System.out.println("│    ilink login    - 扫码登录                  │");
         System.out.println("│    ilink logout   - 断开连接                  │");
         System.out.println("│    ilink send     - 发送消息                  │");
+        System.out.println("│    ilink reply    - 回复消息                  │");
         System.out.println("│    ilink listen   - 监听消息                  │");
         System.out.println("│    ilink info     - 协议信息                  │");
         System.out.println("└──────────────────────────────────────────────┘");
@@ -349,12 +362,16 @@ public class ILinkCommand implements Command {
         System.out.println("└──────────────────────────────────────────────┘");
         System.out.println();
 
+        // 线程安全的 userId 持有者，用于在监听回调线程和主线程之间传递
+        AtomicReference<String> lastUserId = new AtomicReference<>();
+
         // 注册消息处理器
         ILinkService.MessageListener listener = (userId, text, contextToken) -> {
+            lastUserId.set(userId);  // 记住最后发消息的用户
             System.out.println();
             System.out.println("📩 收到消息 [" + userId + "]:");
             System.out.println("   " + text);
-            System.out.print("   回复 (回车跳过) > ");
+            System.out.print("💬 输入回复内容 (回车跳过) > ");
         };
 
         ilinkService.addMessageListener(listener);
@@ -364,7 +381,6 @@ public class ILinkCommand implements Command {
 
         // 交互式回复
         Scanner scanner = new Scanner(System.in, java.nio.charset.StandardCharsets.UTF_8);
-        String lastUserId = null;
 
         while (true) {
             String input = scanner.nextLine().trim();
@@ -377,14 +393,17 @@ public class ILinkCommand implements Command {
                 continue;
             }
 
-            // 如果有待回复的用户
-            if (lastUserId != null && !input.isEmpty()) {
+            // 发送回复
+            String replyTo = lastUserId.getAndSet(null);
+            if (replyTo != null) {
                 try {
-                    ilinkService.reply(lastUserId, input);
-                    System.out.println("   ✅ 已回复");
+                    ilinkService.reply(replyTo, input);
+                    System.out.println("   ✅ 已回复 → [" + replyTo + "]");
                 } catch (CLIException e) {
                     System.out.println("   ❌ 发送失败: " + e.getMessage());
                 }
+            } else {
+                System.out.println("   ⚠ 暂无待回复消息，使用 'ilink send <用户ID> " + input + "' 发送");
             }
         }
 
