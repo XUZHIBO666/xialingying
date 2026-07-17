@@ -2,11 +2,13 @@ package com.demo.demo.Service;
 
 import com.lth.wechat.ilink.ILinkClient;
 import com.lth.wechat.ilink.LoginCredentials;
+import com.lth.wechat.ilink.dto.message.ImageContent;
 import com.lth.wechat.ilink.dto.message.MessageItemDto;
 import com.lth.wechat.ilink.dto.message.ReceiveMessagesResult;
 import com.lth.wechat.ilink.dto.message.WeixinMessageDto;
 import com.lth.wechat.ilink.entity.login.LoginStatusResp;
 import com.lth.wechat.ilink.entity.login.QrCodeResp;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -14,31 +16,54 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Bot 核心服务：管理登录状态、二维码、消息收发
+ * Bot 核心服务：管理 iLink 登录状态、二维码、消息收发
+ *
+ * iLink 通信流程：
+ *   1. getBotQrCode() → 获取登录二维码
+ *   2. getQrCodeStatus() → 轮询等待用户扫码确认
+ *   3. createCredentials() → 生成登录凭证
+ *   4. receiveMessages() → 轮询接收新消息
+ *   5. sendTextMessage() → 发送文本回复
+ *   6. uploadMedia() + sendImageMessage() → 发送图片回复
  */
+@Slf4j
 @Service
 public class BotService {
 
-    private final ILinkClient client = new ILinkClient();
+    private final ILinkClient client;
 
     // 状态（线程安全）
-    private final AtomicReference<String> qrCodeBase64 = new AtomicReference<>(); // 二维码 base64
-    private final AtomicReference<String> qrCodeUrl    = new AtomicReference<>(); // 二维码链接
-    private final AtomicReference<String> statusText   = new AtomicReference<>("未启动");
+    private final AtomicReference<String> qrCodeBase64 = new AtomicReference<>();
+    private final AtomicReference<String> qrCodeUrl = new AtomicReference<>();
+    private final AtomicReference<String> statusText = new AtomicReference<>("未启动");
     private final AtomicReference<LoginCredentials> credentials = new AtomicReference<>();
     private volatile boolean loggedIn = false;
 
     // 消息和日志
-    private final List<String> logs     = new CopyOnWriteArrayList<>();
-    private final List<Msg> messages    = new CopyOnWriteArrayList<>();
+    private final List<String> logs = new CopyOnWriteArrayList<>();
+    private final List<Msg> messages = new CopyOnWriteArrayList<>();
     private String cursor = "";
     private Thread listenThread;
+    private Thread loginThread;
+    // 每次重新获取二维码都会递增，防止旧登录线程把新二维码状态覆盖掉。
+    private final AtomicInteger loginSession = new AtomicInteger();
 
-    // 自动回复处理器（设置后，收到消息会自动回复）
+    // 自动回复处理器
     private volatile ReplyHandler autoReplyHandler;
+    private volatile ImageReplyHandler imageReplyHandler;
+
+    public BotService() {
+        this(new ILinkClient());
+    }
+
+    BotService(ILinkClient client) {
+        this.client = client;
+        log.info("[iLink] BotService 初始化完成");
+    }
 
     // ==================== 公开方法 ====================
 
@@ -54,6 +79,11 @@ public class BotService {
 
     private synchronized void startLogin(boolean force) {
         if (loggedIn && !force) return;
+        if (!force && loginThread != null && loginThread.isAlive()) return;
+
+        int session = loginSession.incrementAndGet();
+        if (loginThread != null) loginThread.interrupt();
+
         if (force) {
             loggedIn = false;
             credentials.set(null);
@@ -65,55 +95,83 @@ public class BotService {
             if (listenThread != null) listenThread.interrupt();
         }
         statusText.set("正在获取二维码...");
+        log.info("[iLink] 开始获取登录二维码...");
 
-        new Thread(() -> {
+        loginThread = new Thread(() -> {
             try {
                 // 1. 获取二维码
                 QrCodeResp qr = client.getBotQrCode();
+                if (!isCurrentLoginSession(session)) return;
+
                 String content = qr.getQrcode();
                 String imgData = qr.getQrcode_img_content();
 
                 qrCodeUrl.set(content);
+                log.info("[iLink] 二维码已获取: {}", content);
 
                 // 2. 处理二维码图片
                 String qrBase64 = buildQrCodeBase64(content, imgData);
                 qrCodeBase64.set(qrBase64);
 
-                log("二维码已获取，请扫描");
+                displayLog("二维码已获取，请扫描");
                 statusText.set("等待扫码...");
 
-                // 3. 轮询等待扫码
-                for (int i = 0; i < 150; i++) { // 最多等 300 秒
+                // 3. 轮询等待扫码确认
+                for (int i = 0; i < 150; i++) {
+                    if (!isCurrentLoginSession(session) || Thread.currentThread().isInterrupted()) return;
                     Thread.sleep(2000);
-                    LoginStatusResp s = client.getQrCodeStatus(content);
+                    LoginStatusResp s;
+                    try {
+                        s = client.getQrCodeStatus(content);
+                    } catch (Exception e) {
+                        if (!isCurrentLoginSession(session)) return;
+                        log.warn("[iLink] 查询扫码状态失败，继续重试: {}", e.getMessage());
+                        displayLog("查询扫码状态失败，继续重试: " + e.getMessage());
+                        statusText.set("查询扫码状态失败，正在重试...");
+                        continue;
+                    }
+
                     String code = s.getStatus();
-                    log("状态: " + code);
+                    log.debug("[iLink] 扫码状态检查 #{}: {}", i + 1, code);
 
                     if ("confirmed".equals(code)) {
                         credentials.set(ILinkClient.createCredentials(content, s));
                         loggedIn = true;
                         statusText.set("已登录 " + credentials.get().getUserId());
-                        log("登录成功！Bot ID: " + credentials.get().getUserId());
-                        startListening();  // 开始监听消息
+                        log.info("[iLink] 登录成功！Bot ID: {}", credentials.get().getUserId());
+                        displayLog("登录成功！Bot ID: " + credentials.get().getUserId());
+                        startListening();
                         return;
                     }
                     if ("expired".equals(code)) {
+                        log.warn("[iLink] 二维码已过期");
                         statusText.set("二维码已过期，请刷新页面重试");
                         return;
                     }
                 }
+                log.warn("[iLink] 登录超时（300秒）");
                 statusText.set("登录超时，请刷新页面重试");
 
             } catch (Exception e) {
-                log("错误: " + e.getMessage());
-                statusText.set("错误: " + e.getMessage());
+                if (isCurrentLoginSession(session)) {
+                    log.error("[iLink] 登录流程异常: {}", e.getMessage(), e);
+                    displayLog("错误: " + e.getMessage());
+                    statusText.set("错误: " + e.getMessage());
+                }
             }
-        }).start();
+        });
+        loginThread.start();
     }
 
-    /** 启动消息监听 */
+    private boolean isCurrentLoginSession(int session) {
+        return loginSession.get() == session;
+    }
+
+    /** 启动消息监听（iLink 消息接收轮询） */
     private void startListening() {
+        log.info("[iLink] 启动消息监听线程...");
         listenThread = new Thread(() -> {
+            log.info("[iLink] 消息监听已启动，等待新消息...");
             while (loggedIn) {
                 try {
                     ReceiveMessagesResult result = client.receiveMessages(credentials.get(), cursor);
@@ -122,49 +180,156 @@ public class BotService {
                         continue;
                     }
                     String nextCursor = result.getNextCursor();
-                    if (nextCursor != null && !nextCursor.isEmpty()) cursor = nextCursor;
+                    if (nextCursor != null && !nextCursor.isEmpty()) {
+                        cursor = nextCursor;
+                        log.debug("[iLink] 更新游标: {}", cursor);
+                    }
 
                     for (WeixinMessageDto dto : result.getMessages()) {
+                        if (!dto.isUserMessage()) continue;
                         if (!dto.hasItems()) continue;
                         for (MessageItemDto item : dto.getItemList()) {
-                            if (!item.isText()) continue;
-
-                            String text = item.getText();
                             String fromUser = dto.getFromUserId();
-                            String clientId = dto.getClientId();
+                            String contextToken = dto.getContextToken();
 
-                            Msg msg = new Msg(fromUser, clientId, text);
-                            messages.add(msg);
-                            log(fromUser + ": " + text);
+                            if (item.isText()) {
+                                String text = item.getText();
+                                log.info("[iLink] 收到消息 from={} contextToken={} text={}",
+                                        fromUser, contextToken, text);
+                                processTextMessage(fromUser, contextToken, text);
+                                continue;
+                            }
 
-                            // --- 自动回复 ---
-                            ReplyHandler handler = autoReplyHandler;
-                            if (handler != null) {
-                                String reply = handler.onMessage(fromUser, text);
-                                if (reply != null && !reply.isEmpty()) {
-                                    sendReply(fromUser, clientId, reply);
-                                }
+                            if (item.isImage()) {
+                                log.info("[iLink] 收到图片 from={} contextToken={}", fromUser, contextToken);
+                                processImageItem(fromUser, contextToken, item.getImage());
                             }
                         }
                     }
                 } catch (Exception e) {
-                    if (loggedIn) log("监听异常: " + e.getMessage());
-                    try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
+                    if (loggedIn) {
+                        log.error("[iLink] 消息监听异常: {}", e.getMessage(), e);
+                        displayLog("监听异常: " + e.getMessage());
+                    }
+                    try {
+                        Thread.sleep(5000);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
             }
+            log.info("[iLink] 消息监听已停止");
         });
         listenThread.setDaemon(true);
         listenThread.start();
     }
 
-    /** 发送文本回复 */
-    public void sendReply(String toUserId, String clientId, String text) {
-        if (!loggedIn) { log("未登录，无法发送"); return; }
+    void processTextMessage(String fromUser, String contextToken, String text) {
+        Msg msg = new Msg(fromUser, contextToken, text);
+        messages.add(msg);
+        displayLog(fromUser + ": " + text);
+
+        // --- 自动回复 ---
+        ReplyHandler handler = autoReplyHandler;
+        if (handler != null) {
+            try {
+                String reply = handler.onMessage(fromUser, contextToken, text);
+                if (reply != null && !reply.isEmpty()) {
+                    sendReply(fromUser, contextToken, reply);
+                }
+            } catch (Exception e) {
+                log.error("[iLink] 自动回复处理异常: {}", e.getMessage(), e);
+            }
+        }
+    }
+
+    private void processImageItem(String fromUser, String contextToken, ImageContent image) {
+        if (image == null) {
+            displayLog(fromUser + ": [图片消息为空]");
+            return;
+        }
         try {
-            client.sendTextMessage(credentials.get(), toUserId, clientId, text);
-            log("回复 -> " + toUserId + ": " + text);
+            // iLink SDK 的 downloadMedia 第一个参数实际需要 CDN 的 encryptQueryParam；
+            // url 只作为少数兼容场景的兜底，否则会出现“下载媒体失败”。
+            String mediaParam = image.getEncryptQueryParam();
+            if (mediaParam == null || mediaParam.isBlank()) {
+                mediaParam = image.getUrl();
+            }
+            log.info("[iLink] 下载图片 mediaParam={} aesKeyPresent={} urlPresent={}",
+                    mediaParam == null ? "null" : mediaParam.substring(0, Math.min(mediaParam.length(), 24)) + "...",
+                    image.getAesKey() != null && !image.getAesKey().isBlank(),
+                    image.getUrl() != null && !image.getUrl().isBlank());
+            byte[] imageBytes = client.downloadMedia(mediaParam, image.getAesKey());
+            processImageMessage(fromUser, contextToken, imageBytes);
         } catch (Exception e) {
-            log("发送失败: " + e.getMessage());
+            log.error("[iLink] 图片下载失败 from={} error={}", fromUser, e.getMessage(), e);
+            displayLog("图片下载失败: " + e.getMessage());
+            sendReply(fromUser, contextToken, "收到图片了，但图片下载失败，暂时无法识别。");
+        }
+    }
+
+    void processImageMessage(String fromUser, String contextToken, byte[] imageBytes) {
+        messages.add(new Msg(fromUser, contextToken, "[图片]"));
+        displayLog(fromUser + ": [图片]");
+
+        // 图片识别和文本自动回复分开注册，避免普通文本 AI 误处理图片消息。
+        ImageReplyHandler handler = imageReplyHandler;
+        if (handler != null) {
+            try {
+                String reply = handler.onImage(fromUser, contextToken, imageBytes);
+                if (reply != null && !reply.isEmpty()) {
+                    sendReply(fromUser, contextToken, reply);
+                }
+            } catch (Exception e) {
+                log.error("[iLink] 图片自动回复处理异常: {}", e.getMessage(), e);
+                sendReply(fromUser, contextToken, "收到图片了，但识别失败了：" + e.getMessage());
+            }
+        }
+    }
+
+    /** 发送文本回复（iLink 消息发送） */
+    public void sendReply(String toUserId, String contextToken, String text) {
+        if (!loggedIn) {
+            log.warn("[iLink] 发送失败：未登录");
+            displayLog("未登录，无法发送");
+            return;
+        }
+        try {
+            log.info("[iLink] 发送文本消息 to={} contextToken={} text={}",
+                    toUserId, contextToken, text);
+            client.sendTextMessage(credentials.get(), toUserId, contextToken, text);
+            log.info("[iLink] 文本消息发送成功 to={}", toUserId);
+            displayLog("回复 -> " + toUserId + ": " + text);
+        } catch (Exception e) {
+            log.error("[iLink] 文本消息发送失败 to={} error={}", toUserId, e.getMessage(), e);
+            displayLog("发送失败: " + e.getMessage());
+        }
+    }
+
+    /** 发送图片回复 */
+    public boolean sendImageReply(String toUserId, String contextToken, byte[] imageBytes) {
+        if (!loggedIn) {
+            log.warn("[iLink] 发送图片失败：未登录");
+            displayLog("未登录，无法发送图片");
+            return false;
+        }
+        if (imageBytes == null || imageBytes.length == 0) {
+            log.warn("[iLink] 发送图片失败：图片为空");
+            displayLog("图片为空，无法发送");
+            return false;
+        }
+        try {
+            log.info("[iLink] 上传图片 to={} size={} bytes", toUserId, imageBytes.length);
+            ILinkClient.MediaInfo media = client.uploadMedia(credentials.get(), 1, toUserId, imageBytes);
+            client.sendImageMessage(credentials.get(), toUserId, contextToken, media);
+            log.info("[iLink] 图片消息发送成功 to={}", toUserId);
+            displayLog("图片回复 -> " + toUserId + " (" + imageBytes.length + " bytes)");
+            return true;
+        } catch (Exception e) {
+            log.error("[iLink] 图片消息发送失败 to={} error={}", toUserId, e.getMessage(), e);
+            displayLog("发送图片失败: " + e.getMessage());
+            return false;
         }
     }
 
@@ -177,7 +342,6 @@ public class BotService {
     public List<String> getLogs()    { return new ArrayList<>(logs); }
     public List<Msg> getMessages()   { return new ArrayList<>(messages); }
 
-    /** 拉取新消息（调用后清空） */
     public List<Msg> pollMessages() {
         if (messages.isEmpty()) return Collections.emptyList();
         List<Msg> result = new ArrayList<>(messages);
@@ -185,10 +349,9 @@ public class BotService {
         return result;
     }
 
-    private void log(String msg) {
-        System.out.println("[Bot] " + msg);
+    private void displayLog(String msg) {
         logs.add(msg);
-        if (logs.size() > 200) logs.remove(0); // 保留最近 200 条
+        if (logs.size() > 200) logs.remove(0);
     }
 
     /** 把 SDK 返回的各种格式统一转成纯 base64（前端 img 标签直接用） */
@@ -196,25 +359,24 @@ public class BotService {
         try {
             byte[] imageBytes = null;
 
-            // 优先处理：如果是纯 base64（含 data URI 前缀）
             if (imgData != null && !imgData.isEmpty()) {
                 if (imgData.contains(",")) {
-                    // 带 data URI 前缀: data:image/png;base64,xxxx
                     imageBytes = Base64.getDecoder().decode(imgData.substring(imgData.indexOf(",") + 1));
                 } else if (!imgData.startsWith("http")) {
-                    // 可能是纯 base64
                     try {
                         imageBytes = Base64.getDecoder().decode(imgData);
-                    } catch (IllegalArgumentException ignored) {}
+                    } catch (IllegalArgumentException ignored) {
+                        log.debug("[iLink] imgData 不是 base64 格式，尝试作为 URL 处理");
+                    }
                 }
             }
 
-            // SDK 返回的是 URL/Token，用 qrserver API 生成真正的二维码图片
             if (imageBytes == null) {
                 String data = (imgData != null && imgData.startsWith("http")) ? imgData : content;
                 if (data == null || data.isEmpty()) data = content;
                 String api = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data="
                         + java.net.URLEncoder.encode(data, "UTF-8");
+                log.debug("[iLink] 使用 qrserver API 生成二维码");
                 imageBytes = new java.net.URI(api).toURL().openStream().readAllBytes();
             }
 
@@ -222,7 +384,7 @@ public class BotService {
                 return Base64.getEncoder().encodeToString(imageBytes);
             }
         } catch (Exception e) {
-            log("生成二维码图片失败: " + e.getMessage());
+            log.error("[iLink] 生成二维码图片失败: {}", e.getMessage(), e);
         }
         return "";
     }
@@ -231,26 +393,40 @@ public class BotService {
 
     /**
      * 设置自动回复规则
-     * 入参：(发信人ID, 消息文本) -> 返回要回复的文本，返回 null 或空字符串则不回复
+     * @param handler (发信人ID, contextToken, 消息文本) → 回复文本，返回 null/空则不回复
      */
     public void setAutoReply(ReplyHandler handler) {
         this.autoReplyHandler = handler;
+        log.info("[iLink] 自动回复处理器已设置");
     }
 
-    /** 自动回复处理器接口 */
+    public void setImageReply(ImageReplyHandler handler) {
+        this.imageReplyHandler = handler;
+        log.info("[iLink] 图片识别处理器已设置");
+    }
+
     @FunctionalInterface
     public interface ReplyHandler {
-        String onMessage(String fromUserId, String text);
+        String onMessage(String fromUserId, String contextToken, String text);
+    }
+
+    @FunctionalInterface
+    public interface ImageReplyHandler {
+        String onImage(String fromUserId, String contextToken, byte[] imageBytes) throws Exception;
     }
 
     // ==================== DTO ====================
 
     public static class Msg {
         public String fromUser;
-        public String clientId;
+        public String contextToken;
         public String content;
         public long time = System.currentTimeMillis();
 
-        public Msg(String f, String c, String t) { fromUser = f; clientId = c; content = t; }
+        public Msg(String f, String c, String t) {
+            fromUser = f;
+            contextToken = c;
+            content = t;
+        }
     }
 }

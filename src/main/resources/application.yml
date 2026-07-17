@@ -22,3 +22,15 @@ ai:
     url: https://api.deepseek.com
   model: deepseek-chat
   system-prompt: 你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
+  image:
+    api:
+      key: ${IMAGE_API_KEY:}
+      url: ${IMAGE_API_URL:https://api.openai.com}
+    model: ${IMAGE_MODEL:gpt-image-1}
+    size: ${IMAGE_SIZE:1024x1024}
+  vision:
+    api:
+      key: ${VISION_API_KEY:${IMAGE_API_KEY:}}
+      url: ${VISION_API_URL:https://api.siliconflow.cn}
+    model: ${VISION_MODEL:Qwen/Qwen3-VL-8B-Instruct}
+    prompt: ${VISION_PROMPT:请用中文简洁描述这张图片的主要内容，如果图片中有文字也请读出来。}

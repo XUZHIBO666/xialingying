@@ -5,3 +5,15 @@
 ai:
   api:
     key: your-api-key-here
+  image:
+    api:
+      key: your-image-api-key-here
+      url: https://api.openai.com
+    model: gpt-image-1
+    size: 1024x1024
+  vision:
+    api:
+      key: your-vision-api-key-here
+      url: https://api.siliconflow.cn
+    model: Qwen/Qwen3-VL-8B-Instruct
+    prompt: 请用中文简洁描述这张图片的主要内容，如果图片中有文字也请读出来。
