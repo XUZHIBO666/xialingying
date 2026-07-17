@@ -2,9 +2,13 @@ package com.demo.demo.controller;
 
 import com.demo.demo.Service.AIService;
 import com.demo.demo.Service.BotService;
+import com.demo.demo.Service.ImageGenerationService;
+import com.demo.demo.Service.ImageRecognitionService;
 import com.demo.demo.Utils.WeatherUtil;
+import com.demo.demo.execption.BizException;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
@@ -13,6 +17,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Bot 控制器：管理微信 Bot 页面、状态、消息收发
+ */
+@Slf4j
 @Controller
 @RequestMapping("/bot")
 public class BotController {
@@ -23,12 +31,41 @@ public class BotController {
     @Resource
     private AIService aiService;
 
-    // ==================== 初始化：应用一启动就设置好自动回复 ====================
+    @Resource
+    private ImageGenerationService imageGenerationService;
+
+    @Resource
+    private ImageRecognitionService imageRecognitionService;
+
+    // ==================== 初始化：设置自动回复 ====================
 
     @PostConstruct
     public void initAutoReply() {
-        botService.setAutoReply((fromUser, text) -> {
+        log.info("[BotController] 初始化自动回复处理器...");
+        botService.setAutoReply((fromUser, contextToken, text) -> {
+            log.info("[自动回复] 收到消息 from={} contextToken={} text={}", fromUser, contextToken, text);
+
+            // 图片生成优先级最高，避免“生成图片...”被普通聊天模型当成闲聊处理。
+            if (imageGenerationService.isImageRequest(text)) {
+                String prompt = imageGenerationService.extractPrompt(text);
+                if (prompt == null) {
+                    return "请告诉我想画什么，例如：生成图片：一只穿宇航服的猫";
+                }
+                if (!imageGenerationService.isConfigured()) {
+                    return "图片生成未配置，请管理员设置 IMAGE_API_KEY";
+                }
+                try {
+                    byte[] imageBytes = imageGenerationService.generateImage(prompt);
+                    boolean sent = botService.sendImageReply(fromUser, contextToken, imageBytes);
+                    return sent ? null : "图片已生成，但发送失败了，请稍后再试";
+                } catch (Exception e) {
+                    log.error("[自动回复] 图片生成失败", e);
+                    return "抱歉，图片生成失败了：" + e.getMessage();
+                }
+            }
+
             if (!aiService.isConfigured()) {
+                log.warn("[自动回复] AI 未配置，返回提示");
                 return "AI 未配置，请联系管理员";
             }
 
@@ -37,18 +74,21 @@ public class BotController {
                 String city = extractCity(text);
                 if (city != null) {
                     try {
+                        log.info("[自动回复] 查询天气，城市: {}", city);
                         String weather = WeatherUtil.getWeather(city);
                         String prompt = "用户问: \"" + text + "\"\n"
                                 + "以下是实时天气数据: " + weather + "\n"
                                 + "请用自然的中文把这天气数据告诉用户，两句话以内。";
                         String reply = aiService.chat(fromUser, prompt);
                         if (reply != null) return reply;
+                    } catch (BizException e) {
+                        log.warn("[自动回复] 天气查询失败: code={}, msg={}", e.getCode(), e.getMessage());
+                        return "抱歉，" + e.getMessage();
                     } catch (Exception e) {
-                        System.err.println("[天气] 查询失败: " + e.getMessage());
-                        return "抱歉，查询「" + city + "」的天气失败了：" + e.getMessage();
+                        log.error("[自动回复] 天气查询异常", e);
+                        return "抱歉，查询「" + city + "」的天气时出错了，请稍后再试";
                     }
                 }
-                // 没提取到城市，但提到了天气 → 交给 AI 处理
             }
 
             // -- 工具2：查时间 --
@@ -68,14 +108,25 @@ public class BotController {
 
             return "（AI 暂时无响应，请稍后再试）";
         });
+
+        // 图片消息不进入普通文本对话，单独交给视觉模型识别后回复。
+        botService.setImageReply((fromUser, contextToken, imageBytes) -> {
+            log.info("[自动回复] 收到图片 from={} contextToken={} size={} bytes",
+                    fromUser, contextToken, imageBytes == null ? 0 : imageBytes.length);
+            if (!imageRecognitionService.isConfigured()) {
+                return "图片识别未配置，请管理员设置 VISION_API_KEY 或 IMAGE_API_KEY";
+            }
+            return imageRecognitionService.recognize(imageBytes);
+        });
+        log.info("[BotController] 自动回复处理器初始化完成");
     }
 
     // ==================== 页面 ====================
 
-    /** 主页面：访问时自动触发登录 */
     @GetMapping
     public String botPage() {
         if (!botService.isLoggedIn()) {
+            log.info("[BotController] 未登录，启动登录流程");
             botService.startLogin();
         }
         return "bot";
@@ -83,7 +134,6 @@ public class BotController {
 
     // ==================== REST API ====================
 
-    /** 获取二维码和状态 */
     @GetMapping("/status")
     @ResponseBody
     public Map<String, Object> status() {
@@ -95,7 +145,6 @@ public class BotController {
         return map;
     }
 
-    /** 拉取新消息 */
     @GetMapping("/messages")
     @ResponseBody
     public Map<String, Object> messages() {
@@ -105,47 +154,48 @@ public class BotController {
         return map;
     }
 
-    /** 发送回复 */
     @PostMapping("/send")
     @ResponseBody
     public Map<String, Object> send(@RequestParam String toUserId,
-                                     @RequestParam String clientId,
+                                     @RequestParam String contextToken,
                                      @RequestParam String text) {
-        botService.sendReply(toUserId, clientId, text);
+        log.info("[BotController] 手动发送消息 to={} text={}", toUserId, text);
+        botService.sendReply(toUserId, contextToken, text);
         Map<String, Object> map = new HashMap<>();
         map.put("ok", true);
         return map;
     }
 
-    /** 重新获取二维码 */
     @PostMapping("/restart")
     @ResponseBody
     public Map<String, Object> restart() {
+        log.info("[BotController] 重新获取二维码");
         botService.restartLogin();
         Map<String, Object> map = new HashMap<>();
         map.put("ok", true);
         return map;
     }
 
-    /** 从消息中提取城市名（如 "今天杭州天气怎么样" -> "杭州"） */
+    // ==================== 工具方法 ====================
+
+    /**
+     * 从消息中提取城市名
+     * 如 "今天杭州天气怎么样" → "杭州"
+     */
     private String extractCity(String text) {
         int idx = text.indexOf("天气");
         if (idx <= 0) return null;
 
-        // 取"天气"前面的部分，逐步去掉前缀/动词/标点
         String before = text.substring(0, idx);
 
-        // 去掉常见前缀：查一下、帮我查、我想知道 等
+        // 逐步去掉前缀/动词/标点
         before = before.replaceAll("(?s).*?(查一下|帮我查|我想知道|我想了解|给我查|请问)", "");
-        // 去掉时间词
         before = before.replaceAll("(?s).*?(今天|明天|后天|昨天|现在|这周|下周|本周)", "");
-        // 去掉介词/动词前缀
         before = before.replaceAll("(?s).*?(在|的|了|呢|吗|啊|呀|吧|一下|下)", "");
-        // 去掉标点
-        before = before.replaceAll("[，。！？、,.\s]", "");
+        before = before.replaceAll("[，。！？、,.\\s]", "");
         before = before.trim();
 
-        // 如果剩下的文本太长（>6字），可能没清理干净，只取后2-3字
+        // 太长则只取后2-3字
         if (before.length() > 6) {
             before = before.substring(before.length() - 3);
         }

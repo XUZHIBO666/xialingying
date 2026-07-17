@@ -1,12 +1,18 @@
 package com.demo.demo.Utils;
 
+import com.demo.demo.execption.BizException;
+import com.demo.demo.execption.ResponseCodeEnum;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
+import java.net.SocketTimeoutException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -14,11 +20,12 @@ import java.util.concurrent.TimeUnit;
  * 天气查询工具类
  * 使用 wttr.in 免费开放 API，一个请求完成城市定位+天气查询
  * 无需注册，无需 API Key
+ *
+ * 文档: https://github.com/chubin/wttr.in
  */
+@Slf4j
 public class WeatherUtil {
 
-    // wttr.in 免费天气 API
-    // 文档: https://github.com/chubin/wttr.in
     private static final String WTTR_API = "https://wttr.in";
 
     private static final OkHttpClient CLIENT = new OkHttpClient.Builder()
@@ -26,7 +33,7 @@ public class WeatherUtil {
             .readTimeout(10, TimeUnit.SECONDS)
             .build();
 
-    // wttr.in 返回英文天气描述 → 中文展示（本地化翻译，非天气代码映射）
+    // 天气描述英文 → 中文翻译表
     private static final Map<String, String> ZH = Map.ofEntries(
             Map.entry("Sunny", "晴"),
             Map.entry("Clear", "晴"),
@@ -88,62 +95,110 @@ public class WeatherUtil {
      *
      * @param cityName 城市名（中文/拼音/英文均可）
      * @return 格式化天气信息
-     * @throws CityNotFoundException 城市不存在
-     * @throws Exception             网络异常或 API 错误
+     * @throws BizException 参数为空、城市不存在、网络异常等
      */
-    public static String getWeather(String cityName) throws Exception {
-        System.out.println("========== 查询天气 ==========");
-        System.out.println("目标城市: " + cityName);
+    public static String getWeather(String cityName) {
+        // 日志：记录请求参数
+        log.info("[天气查询] 开始查询，城市: {}", cityName);
 
-        // 调用 wttr.in JSON API，一次请求完成城市解析 + 天气查询
-        String url = WTTR_API + "/" + cityName + "?format=j1";
-        System.out.println("🌐 请求: " + url);
+        // 边界校验：空城市名
+        if (cityName == null || cityName.trim().isEmpty()) {
+            log.warn("[天气查询] 城市名为空");
+            throw new BizException(ResponseCodeEnum.CITY_NAME_EMPTY);
+        }
 
-        String json = httpGet(url);
-        JsonObject root = parseJson(json);
+        String trimmedCity = cityName.trim();
 
-        // ── 解析当前天气 ──
+        // 边界校验：城市名包含非法字符（只允许中文、英文、空格、连字符）
+        if (!trimmedCity.matches("[\\u4e00-\\u9fa5a-zA-Z\\s\\-]+")) {
+            log.warn("[天气查询] 城市名包含非法字符: {}", trimmedCity);
+            throw new BizException(ResponseCodeEnum.CITY_NAME_INVALID,
+                    "城市名「" + trimmedCity + "」包含无效字符，请使用中文/拼音/英文");
+        }
+
+        // 调用 wttr.in JSON API
+        String url = WTTR_API + "/" + trimmedCity + "?format=j1";
+        log.info("[天气查询] 请求 URL: {}", url);
+
+        String json;
+        try {
+            json = httpGet(url);
+        } catch (BizException e) {
+            throw e; // 直接抛出，不包装
+        } catch (SocketTimeoutException e) {
+            log.error("[天气查询] 请求超时，城市: {}", trimmedCity, e);
+            throw new BizException(ResponseCodeEnum.THIRD_PARTY_TIMEOUT,
+                    "天气服务响应超时，请稍后重试", e);
+        } catch (Exception e) {
+            log.error("[天气查询] 网络请求失败，城市: {}", trimmedCity, e);
+            throw new BizException(ResponseCodeEnum.WEATHER_API_ERROR,
+                    "天气服务暂时不可用，请稍后重试", e);
+        }
+
+        // 解析 JSON
+        JsonObject root;
+        try {
+            root = parseJson(json);
+        } catch (Exception e) {
+            log.error("[天气查询] JSON 解析失败，城市: {}", trimmedCity, e);
+            throw new BizException(ResponseCodeEnum.WEATHER_PARSE_ERROR,
+                    "天气数据格式异常", e);
+        }
+
+        log.debug("[天气查询] API 返回数据: {}", json);
+
+        // 解析当前天气
         JsonArray conditions = root.getAsJsonArray("current_condition");
         if (conditions == null || conditions.isEmpty()) {
-            throw new CityNotFoundException(cityName);
+            log.warn("[天气查询] 城市未找到: {}", trimmedCity);
+            throw new BizException(ResponseCodeEnum.CITY_NOT_FOUND,
+                    "❌ 未找到城市「" + trimmedCity + "」\n"
+                    + "  请检查：\n"
+                    + "  1. 城市名拼写是否正确（支持中文/拼音/英文）\n"
+                    + "  2. 是否输入了不存在的城市名");
         }
         JsonObject current = conditions.get(0).getAsJsonObject();
 
-        // 直接从 API 读取天气描述，trim 去除多余空格
+        // 提取各项数据
         String weatherEn = current.getAsJsonArray("weatherDesc")
                 .get(0).getAsJsonObject()
                 .get("value").getAsString().trim();
-        // 本地化翻译（大小写不敏感匹配）
         String weatherDesc = translateWeather(weatherEn);
 
-        String tempC      = current.get("temp_C").getAsString();
+        String tempC = current.get("temp_C").getAsString();
         String feelsLikeC = current.get("FeelsLikeC").getAsString();
-        String humidity   = current.get("humidity").getAsString();
-        String windSpeed  = current.get("windspeedKmph").getAsString();
-        String windDirEn  = current.get("winddir16Point").getAsString();
-        String windDir    = WIND_ZH.getOrDefault(windDirEn, windDirEn);
+        String humidity = current.get("humidity").getAsString();
+        String windSpeed = current.get("windspeedKmph").getAsString();
+        String windDirEn = current.get("winddir16Point").getAsString();
+        String windDir = WIND_ZH.getOrDefault(windDirEn, windDirEn);
 
-        // ── 解析城市信息 ──
+        // 解析城市信息
         JsonArray areas = root.getAsJsonArray("nearest_area");
         String country = "";
+        String areaName = "";
         if (areas != null && !areas.isEmpty()) {
             JsonObject area = areas.get(0).getAsJsonObject();
             country = area.getAsJsonArray("country")
                     .get(0).getAsJsonObject()
                     .get("value").getAsString();
+            areaName = area.getAsJsonArray("areaName")
+                    .get(0).getAsJsonObject()
+                    .get("value").getAsString();
         }
 
-        System.out.println("📍 匹配结果: " + cityName + ", " + country);
-        System.out.println("==============================");
-
-        return String.format(
-                "城市: %s (%s) | 温度: %s°C (体感: %s°C) | 天气: %s | %s风 %s km/h | 湿度: %s%%",
-                cityName, country,       // ← 使用用户输入的城市名
+        String result = String.format(
+                "城市: %s (%s, %s) | 温度: %s°C (体感: %s°C) | 天气: %s | %s风 %s km/h | 湿度: %s%%",
+                trimmedCity, areaName, country,
                 tempC, feelsLikeC,
-                weatherDesc,             // ← API 返回的天气描述（已翻译）
+                weatherDesc,
                 windDir, windSpeed,
                 humidity
         );
+
+        // 日志：记录响应结果
+        log.info("[天气查询] 查询成功，结果: {}", result);
+
+        return result;
     }
 
     // ==============================================================
@@ -153,63 +208,48 @@ public class WeatherUtil {
     private static String httpGet(String url) throws Exception {
         Request request = new Request.Builder()
                 .url(url)
-                .header("User-Agent", "curl/8.0")  // wttr.in 建议加 UA
+                .header("User-Agent", "curl/8.0")
                 .build();
         try (Response response = CLIENT.newCall(request).execute()) {
             if (!response.isSuccessful()) {
                 String body = response.body() != null ? response.body().string() : "(空)";
-                // wttr.in 常见错误格式："location not found: ..."
                 if (body.contains("not found") || body.contains("Unknown location")) {
-                    throw new CityNotFoundException(
-                            java.net.URLDecoder.decode(
-                                    response.request().url().toString(), "UTF-8"
-                            ).replaceAll(".*/", "").replaceAll("\\?.*", "")
-                    );
+                    String city = URLDecoder.decode(
+                            response.request().url().toString(), StandardCharsets.UTF_8)
+                            .replaceAll(".*/", "")
+                            .replaceAll("\\?.*", "");
+                    throw new BizException(ResponseCodeEnum.CITY_NOT_FOUND,
+                            "❌ 未找到城市「" + city + "」\n"
+                            + "  请检查城市名拼写是否正确");
                 }
-                throw new Exception("HTTP " + response.code() + ": " + body);
+                throw new BizException(ResponseCodeEnum.WEATHER_API_ERROR,
+                        "天气 API 返回错误 HTTP " + response.code());
             }
             if (response.body() == null) {
-                throw new Exception("响应体为空");
+                throw new BizException(ResponseCodeEnum.WEATHER_API_ERROR, "响应体为空");
             }
             return response.body().string();
         }
     }
 
-    private static JsonObject parseJson(String json) throws Exception {
+    private static JsonObject parseJson(String json) {
         try {
             return JsonParser.parseString(json).getAsJsonObject();
         } catch (Exception e) {
-            throw new Exception("JSON 解析失败: " + e.getMessage());
+            throw new BizException(ResponseCodeEnum.WEATHER_PARSE_ERROR,
+                    "天气数据解析失败: " + e.getMessage(), e);
         }
     }
 
     private static String translateWeather(String english) {
-        // 精确匹配
         String zh = ZH.get(english);
         if (zh != null) return zh;
-        // 大小写不敏感匹配
         for (Map.Entry<String, String> e : ZH.entrySet()) {
             if (e.getKey().equalsIgnoreCase(english)) {
                 return e.getValue();
             }
         }
-        // 无匹配则保留 API 原文
+        log.debug("[天气查询] 未找到天气翻译: {}", english);
         return english;
-    }
-
-    // ==============================================================
-    //  异常类
-    // ==============================================================
-
-    /**
-     * 城市未找到异常
-     */
-    public static class CityNotFoundException extends Exception {
-        public CityNotFoundException(String cityName) {
-            super("❌ 未找到城市「" + cityName + "」\n"
-                    + "  请检查：\n"
-                    + "  1. 城市名拼写是否正确（支持中文/拼音/英文）\n"
-                    + "  2. 是否输入了不存在的城市名");
-        }
     }
 }

@@ -5,7 +5,22 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="28be2a94-18ca-4f16-ad38-4cafae011d60" name="更改" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/compiler.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/compiler.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/Service/AIService.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/Service/AIService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/Service/BotService.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/Service/BotService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/Utils/Response.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/Utils/Response.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/Utils/WeatherUtil.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/Utils/WeatherUtil.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/controller/BotController.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/controller/BotController.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/execption/BaseExceptionInterface.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/execption/BaseExceptionInterface.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/execption/BizException.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/execption/BizException.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/execption/GlobalExpectionHandler.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/execption/GlobalExpectionHandler.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/demo/demo/execption/ResponseCodeEnum.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/demo/demo/execption/ResponseCodeEnum.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/resources/application-local.example.yml" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/resources/application-local.example.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/resources/application.yml" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/resources/application.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/resources/templates/bot.html" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/resources/templates/bot.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/java/com/xzb/xialingying/XialingyingApplicationTests.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/java/com/xzb/xialingying/XialingyingApplicationTests.java" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -44,6 +59,7 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Maven.xialingying [test].executor": "Run",
     "RequestMappingsPanelOrder0": "0",
     "RequestMappingsPanelOrder1": "1",
     "RequestMappingsPanelWidth0": "75",
@@ -53,7 +69,8 @@
     "RunOnceActivity.git.unshallow": "true",
     "Spring Boot.DemoApplication.executor": "Run",
     "Spring Boot.XialingyingApplication.executor": "Run",
-    "git-widget-placeholder": "许志博",
+    "git-widget-placeholder": "main",
+    "ignore.virus.scanning.warn.message": "true",
     "kotlin-language-version-configured": "true",
     "last_opened_file_path": "D:/Git/xialingying/src/main/resources/templates",
     "node.js.detected.package.eslint": "true",
@@ -75,7 +92,17 @@
   </component>
   <component name="RunManager">
     <configuration name="DemoApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" nameIsGenerated="true">
-      <module name="demo" />
+      <envs>
+        <env name="IMAGE_API_KEY" value="sk-bcobxlprrtkjqwnbyhpkegxqeaqthtlibvjrxgjjtvtrpurm" />
+        <env name="AI_API_KEY" value="sk-d05ab250ea074a648a236f378f4ea4e0" />
+        <env name="IMAGE_API_URL" value="https://api.siliconflow.cn" />
+        <env name="IMAGE_MODEL" value="Kwai-Kolors/Kolors" />
+        <env name="IMAGE_SIZE" value="1024x1024" />
+        <env name="VISION_API_KEY" value="sk-bcobxlprrtkjqwnbyhpkegxqeaqthtlibvjrxgjjtvtrpurm" />
+        <env name="VISION_API_URL" value="https://api.siliconflow.cn" />
+        <env name="VISION_MODEL" value="Qwen/Qwen3-VL-8B-Instruct" />
+      </envs>
+      <module name="xialingying" />
       <option name="SPRING_BOOT_MAIN_CLASS" value="com.demo.demo.DemoApplication" />
       <method v="2">
         <option name="Make" enabled="true" />
@@ -85,8 +112,8 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-jdk-9823dce3aa75-125ca727e0f0-intellij.indexing.shared.core-IU-243.24978.46" />
-        <option value="bundled-js-predefined-d6986cc7102b-76f8388c3a79-JavaScript-IU-243.24978.46" />
+        <option value="bundled-jdk-9823dce3aa75-fbdcb00ec9e3-intellij.indexing.shared.core-IU-251.26927.53" />
+        <option value="bundled-js-predefined-d6986cc7102b-09060db00ec0-JavaScript-IU-251.26927.53" />
       </set>
     </attachedChunks>
   </component>
@@ -99,6 +126,7 @@
       <option name="presentableId" value="Default" />
       <updated>1784107287443</updated>
       <workItem from="1784188166587" duration="5740000" />
+      <workItem from="1784275401155" duration="5862000" />
     </task>
     <servers />
   </component>

@@ -140,7 +140,7 @@
                 if (data.messages && data.messages.length > 0) {
                     let html = '';
                     data.messages.forEach(m => {
-                        knownUsers[m.clientId] = { userId: m.fromUser, clientId: m.clientId };
+                        knownUsers[m.contextToken] = { userId: m.fromUser, contextToken: m.contextToken };
                         let t = new Date(m.time).toLocaleTimeString();
                         html += `<div class="msg-item">
                             <span class="user">${m.fromUser}</span>
@@ -165,20 +165,20 @@
         let current = sel.value;
         sel.innerHTML = '<option value="">选择回复对象</option>';
         Object.values(knownUsers).forEach(u => {
-            sel.innerHTML += `<option value="${u.clientId}">${u.userId}</option>`;
+            sel.innerHTML += `<option value="${u.contextToken}">${u.userId}</option>`;
         });
         if (current) sel.value = current;
     }
 
     function sendReply() {
-        let clientId = document.getElementById('userSelect').value;
+        let contextToken = document.getElementById('userSelect').value;
         let text = document.getElementById('replyInput').value.trim();
-        if (!clientId || !text) return;
+        if (!contextToken || !text) return;
 
-        let u = knownUsers[clientId];
+        let u = knownUsers[contextToken];
         let formData = new URLSearchParams();
         formData.append('toUserId', u.userId);
-        formData.append('clientId', clientId);
+        formData.append('contextToken', contextToken);
         formData.append('text', text);
 
         fetch('/bot/send', { method: 'POST', body: formData })
