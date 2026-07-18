@@ -17,3 +17,8 @@ ai:
       url: https://api.siliconflow.cn
     model: Qwen/Qwen3-VL-8B-Instruct
     prompt: 请用中文简洁描述这张图片的主要内容，如果图片中有文字也请读出来。
+
+
+
+
+

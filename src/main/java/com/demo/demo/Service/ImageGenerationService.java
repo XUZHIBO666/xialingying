@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -23,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+@Slf4j
 @Service
 public class ImageGenerationService {
 
@@ -33,6 +35,8 @@ public class ImageGenerationService {
             "^\\s*(?:请|请帮我|帮我)?(?:生成|制作|画)(?:一张|一个|个|张)?\\s*(.*)$",
             Pattern.CASE_INSENSITIVE);
     private static final int MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+    private static final int MAX_HTTP_ATTEMPTS = 3;
+    private static final long[] RETRY_DELAYS_MILLIS = {500L, 1000L};
 
     private final OkHttpClient httpClient;
     private final Gson gson = new Gson();
@@ -123,10 +127,10 @@ public class ImageGenerationService {
                 .post(RequestBody.create(bodyJson, JSON))
                 .build();
 
-        try (Response response = httpClient.newCall(request).execute()) {
+        try (Response response = executeGenerationRequest(request)) {
             String body = response.body() == null ? "" : response.body().string();
             if (!response.isSuccessful()) {
-                throw new IOException("图片生成失败，HTTP " + response.code());
+                throw new IOException("图片生成失败，HTTP " + response.code() + "：" + extractErrorMessage(body));
             }
             return readImageBytes(body);
         }
@@ -134,12 +138,16 @@ public class ImageGenerationService {
 
     private byte[] readImageBytes(String body) throws IOException {
         JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-        JsonArray data = root.getAsJsonArray("data");
-        if (data == null || data.size() == 0 || !data.get(0).isJsonObject()) {
+        JsonArray images = root.getAsJsonArray("data");
+        // SiliconFlow 返回 images，其他 OpenAI 兼容平台通常返回 data。
+        if (images == null) {
+            images = root.getAsJsonArray("images");
+        }
+        if (images == null || images.size() == 0 || !images.get(0).isJsonObject()) {
             throw new IOException("图片生成响应为空");
         }
 
-        JsonObject first = data.get(0).getAsJsonObject();
+        JsonObject first = images.get(0).getAsJsonObject();
         if (first.has("b64_json") && !first.get("b64_json").isJsonNull()) {
             byte[] bytes = Base64.getDecoder().decode(first.get("b64_json").getAsString());
             checkImageSize(bytes);
@@ -153,7 +161,7 @@ public class ImageGenerationService {
 
     private byte[] downloadImage(String url) throws IOException {
         Request request = new Request.Builder().url(url).build();
-        try (Response response = httpClient.newCall(request).execute()) {
+        try (Response response = executeDownloadRequest(request)) {
             if (!response.isSuccessful()) {
                 throw new IOException("下载图片失败，HTTP " + response.code());
             }
@@ -162,6 +170,84 @@ public class ImageGenerationService {
             checkImageSize(bytes);
             return bytes;
         }
+    }
+
+    private Response executeGenerationRequest(Request request) throws IOException {
+        for (int attempt = 1; attempt <= MAX_HTTP_ATTEMPTS; attempt++) {
+            // 生图 POST 的网络异常可能表示平台已经开始计费，保守策略下不自动重试 IOException。
+            Response response = httpClient.newCall(request).execute();
+            if (!isRetryableGenerationStatus(response.code()) || attempt == MAX_HTTP_ATTEMPTS) {
+                return response;
+            }
+
+            log.warn("[图片生成] HTTP {}，准备第 {} 次请求", response.code(), attempt + 1);
+            response.close();
+            waitBeforeRetry(attempt);
+        }
+        throw new IOException("图片生成请求未完成");
+    }
+
+    private Response executeDownloadRequest(Request request) throws IOException {
+        for (int attempt = 1; attempt <= MAX_HTTP_ATTEMPTS; attempt++) {
+            try {
+                Response response = httpClient.newCall(request).execute();
+                if (!isRetryableDownloadStatus(response.code()) || attempt == MAX_HTTP_ATTEMPTS) {
+                    return response;
+                }
+
+                log.warn("[图片下载] HTTP {}，准备第 {} 次请求", response.code(), attempt + 1);
+                response.close();
+            } catch (IOException e) {
+                if (attempt == MAX_HTTP_ATTEMPTS) {
+                    throw e;
+                }
+                log.warn("[图片下载] 网络异常，准备第 {} 次请求: {}", attempt + 1, e.getMessage());
+            }
+            waitBeforeRetry(attempt);
+        }
+        throw new IOException("图片下载请求未完成");
+    }
+
+    private boolean isRetryableGenerationStatus(int statusCode) {
+        return statusCode == 429
+                || statusCode == 500
+                || statusCode == 502
+                || statusCode == 503
+                || statusCode == 504;
+    }
+
+    private boolean isRetryableDownloadStatus(int statusCode) {
+        return statusCode == 408 || isRetryableGenerationStatus(statusCode);
+    }
+
+    private void waitBeforeRetry(int completedAttempt) throws IOException {
+        try {
+            Thread.sleep(RETRY_DELAYS_MILLIS[completedAttempt - 1]);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("等待重试时被中断", e);
+        }
+    }
+
+    private String extractErrorMessage(String json) {
+        if (json == null || json.isBlank()) {
+            return "平台未返回错误详情";
+        }
+        try {
+            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+            if (root.has("message") && !root.get("message").isJsonNull()) {
+                return root.get("message").getAsString();
+            }
+            if (root.has("error") && root.get("error").isJsonObject()) {
+                JsonObject error = root.getAsJsonObject("error");
+                if (error.has("message") && !error.get("message").isJsonNull()) {
+                    return error.get("message").getAsString();
+                }
+            }
+        } catch (Exception ignored) {
+            return json.length() > 120 ? json.substring(0, 120) : json;
+        }
+        return json.length() > 120 ? json.substring(0, 120) : json;
     }
 
     private void checkImageSize(byte[] bytes) throws IOException {

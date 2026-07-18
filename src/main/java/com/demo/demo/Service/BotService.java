@@ -5,17 +5,27 @@ import com.lth.wechat.ilink.LoginCredentials;
 import com.lth.wechat.ilink.dto.message.ImageContent;
 import com.lth.wechat.ilink.dto.message.MessageItemDto;
 import com.lth.wechat.ilink.dto.message.ReceiveMessagesResult;
+import com.lth.wechat.ilink.dto.message.VoiceContent;
 import com.lth.wechat.ilink.dto.message.WeixinMessageDto;
 import com.lth.wechat.ilink.entity.login.LoginStatusResp;
 import com.lth.wechat.ilink.entity.login.QrCodeResp;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -34,7 +44,12 @@ import java.util.concurrent.atomic.AtomicReference;
 @Service
 public class BotService {
 
+    private static final int REPLY_WORKER_COUNT = 2;
+    private static final int REPLY_QUEUE_CAPACITY = 20;
+    private static final AtomicInteger REPLY_THREAD_SEQUENCE = new AtomicInteger();
+
     private final ILinkClient client;
+    private final ExecutorService replyExecutor;
 
     // 状态（线程安全）
     private final AtomicReference<String> qrCodeBase64 = new AtomicReference<>();
@@ -57,12 +72,39 @@ public class BotService {
     private volatile ImageReplyHandler imageReplyHandler;
 
     public BotService() {
-        this(new ILinkClient());
+        this(new ILinkClient(), createReplyExecutor());
     }
 
     BotService(ILinkClient client) {
+        this(client, createReplyExecutor());
+    }
+
+    BotService(ILinkClient client, ExecutorService replyExecutor) {
         this.client = client;
+        this.replyExecutor = replyExecutor;
         log.info("[iLink] BotService 初始化完成");
+    }
+
+    private static ExecutorService createReplyExecutor() {
+        return new ThreadPoolExecutor(
+                REPLY_WORKER_COUNT,
+                REPLY_WORKER_COUNT,
+                0L,
+                TimeUnit.MILLISECONDS,
+                // 队列必须有上限，避免图片平台变慢时任务无限堆积并耗尽内存。
+                new ArrayBlockingQueue<>(REPLY_QUEUE_CAPACITY),
+                runnable -> {
+                    Thread thread = new Thread(runnable,
+                            "bot-reply-" + REPLY_THREAD_SEQUENCE.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    @PreDestroy
+    public void shutdownReplyExecutor() {
+        replyExecutor.shutdownNow();
     }
 
     // ==================== 公开方法 ====================
@@ -203,6 +245,12 @@ public class BotService {
                             if (item.isImage()) {
                                 log.info("[iLink] 收到图片 from={} contextToken={}", fromUser, contextToken);
                                 processImageItem(fromUser, contextToken, item.getImage());
+                                continue;
+                            }
+
+                            if (item.isVoice()) {
+                                log.info("[iLink] 收到语音探测样本 from={}", fromUser);
+                                processVoiceProbe(fromUser, item.getVoice());
                             }
                         }
                     }
@@ -233,14 +281,16 @@ public class BotService {
         // --- 自动回复 ---
         ReplyHandler handler = autoReplyHandler;
         if (handler != null) {
-            try {
-                String reply = handler.onMessage(fromUser, contextToken, text);
-                if (reply != null && !reply.isEmpty()) {
-                    sendReply(fromUser, contextToken, reply);
+            submitReplyTask(fromUser, contextToken, () -> {
+                try {
+                    String reply = handler.onMessage(fromUser, contextToken, text);
+                    if (reply != null && !reply.isEmpty()) {
+                        sendReply(fromUser, contextToken, reply);
+                    }
+                } catch (Exception e) {
+                    log.error("[iLink] 自动回复处理异常: {}", e.getMessage(), e);
                 }
-            } catch (Exception e) {
-                log.error("[iLink] 自动回复处理异常: {}", e.getMessage(), e);
-            }
+            });
         }
     }
 
@@ -269,6 +319,53 @@ public class BotService {
         }
     }
 
+    private void processVoiceProbe(String fromUser, VoiceContent voice) {
+        Thread.ofVirtual().name("voice-probe").start(() -> {
+            if (voice == null) {
+                log.warn("[语音探测] 语音内容为空 from={}", fromUser);
+                return;
+            }
+            long startedAt = System.nanoTime();
+            try {
+                byte[] voiceBytes = client.downloadMedia(
+                        voice.getEncryptQueryParam(),
+                        voice.getAesKey());
+                long downloadMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+                Path probeDirectory = Path.of("target", "voice-probe");
+                Files.createDirectories(probeDirectory);
+                String sampleName = "voice-" + System.currentTimeMillis();
+                Path sampleFile = probeDirectory.resolve(sampleName + ".bin");
+                Files.write(sampleFile, voiceBytes);
+                Path transcriptFile = probeDirectory.resolve(sampleName + ".transcript.txt");
+                Files.writeString(transcriptFile, voice.getText() == null ? "" : voice.getText());
+
+                int headerLength = Math.min(16, voiceBytes.length);
+                String headerHex = HexFormat.of().formatHex(voiceBytes, 0, headerLength);
+                long bitrate = voice.getPlaytime() > 0
+                        ? voiceBytes.length * 8_000L / voice.getPlaytime()
+                        : 0;
+                log.info("[语音探测] from={} file={} encodeType={} sampleRate={} bitsPerSample={} "
+                                + "playtimeMs={} bytes={} estimatedBitrate={}bps headerHex={} "
+                                + "officialTextPresent={} officialTextLength={} downloadMs={}",
+                        fromUser,
+                        sampleFile.toAbsolutePath(),
+                        voice.getEncodeType(),
+                        voice.getSampleRate(),
+                        voice.getBitsPerSample(),
+                        voice.getPlaytime(),
+                        voiceBytes.length,
+                        bitrate,
+                        headerHex,
+                        voice.getText() != null && !voice.getText().isBlank(),
+                        voice.getText() == null ? 0 : voice.getText().length(),
+                        downloadMs);
+            } catch (Exception e) {
+                log.error("[语音探测] 下载或保存失败 from={} error={}",
+                        fromUser, e.getMessage(), e);
+            }
+        });
+    }
+
     void processImageMessage(String fromUser, String contextToken, byte[] imageBytes) {
         messages.add(new Msg(fromUser, contextToken, "[图片]"));
         displayLog(fromUser + ": [图片]");
@@ -276,15 +373,27 @@ public class BotService {
         // 图片识别和文本自动回复分开注册，避免普通文本 AI 误处理图片消息。
         ImageReplyHandler handler = imageReplyHandler;
         if (handler != null) {
-            try {
-                String reply = handler.onImage(fromUser, contextToken, imageBytes);
-                if (reply != null && !reply.isEmpty()) {
-                    sendReply(fromUser, contextToken, reply);
+            submitReplyTask(fromUser, contextToken, () -> {
+                try {
+                    String reply = handler.onImage(fromUser, contextToken, imageBytes);
+                    if (reply != null && !reply.isEmpty()) {
+                        sendReply(fromUser, contextToken, reply);
+                    }
+                } catch (Exception e) {
+                    log.error("[iLink] 图片自动回复处理异常: {}", e.getMessage(), e);
+                    sendReply(fromUser, contextToken, "收到图片了，但识别失败了：" + e.getMessage());
                 }
-            } catch (Exception e) {
-                log.error("[iLink] 图片自动回复处理异常: {}", e.getMessage(), e);
-                sendReply(fromUser, contextToken, "收到图片了，但识别失败了：" + e.getMessage());
-            }
+            });
+        }
+    }
+
+    private void submitReplyTask(String fromUser, String contextToken, Runnable task) {
+        try {
+            replyExecutor.execute(task);
+        } catch (RejectedExecutionException e) {
+            log.warn("[iLink] 自动回复任务队列已满 from={}", fromUser);
+            displayLog("自动回复任务较多，已拒绝新任务");
+            sendReply(fromUser, contextToken, "当前任务较多，请稍后再试");
         }
     }
 
