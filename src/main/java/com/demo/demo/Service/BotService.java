@@ -9,6 +9,7 @@ import com.lth.wechat.ilink.dto.message.VoiceContent;
 import com.lth.wechat.ilink.dto.message.WeixinMessageDto;
 import com.lth.wechat.ilink.entity.login.LoginStatusResp;
 import com.lth.wechat.ilink.entity.login.QrCodeResp;
+import com.lth.wechat.ilink.exception.ILinkSessionExpiredException;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -115,6 +116,9 @@ public class BotService {
 
     @PreDestroy
     public void shutdownReplyExecutor() {
+        loggedIn = false;
+        if (loginThread != null) loginThread.interrupt();
+        if (listenThread != null) listenThread.interrupt();
         replyExecutor.shutdownNow();
     }
 
@@ -227,6 +231,10 @@ public class BotService {
 
     /** 启动消息监听（iLink 消息接收轮询） */
     private void startListening() {
+        if (listenThread != null && listenThread.isAlive()) {
+            log.info("[iLink] 消息监听线程已在运行，跳过重复启动");
+            return;
+        }
         log.info("[iLink] 启动消息监听线程...");
         listenThread = new Thread(() -> {
             log.info("[iLink] 消息监听已启动，等待新消息...");
@@ -278,6 +286,9 @@ public class BotService {
                             }
                         }
                     }
+                } catch (ILinkSessionExpiredException e) {
+                    markSessionExpired(e);
+                    break;
                 } catch (Exception e) {
                     if (loggedIn) {
                         log.error("[iLink] 消息监听异常: {}", e.getMessage(), e);
@@ -295,6 +306,17 @@ public class BotService {
         });
         listenThread.setDaemon(true);
         listenThread.start();
+    }
+
+    private synchronized void markSessionExpired(Exception e) {
+        loggedIn = false;
+        credentials.set(null);
+        cursor = "";
+        qrCodeBase64.set(null);
+        qrCodeUrl.set(null);
+        statusText.set("登录已失效，请重新扫码");
+        displayLog("登录已失效，请重新扫码");
+        log.warn("[iLink] 会话已失效，需要重新扫码: {}", e.getMessage());
     }
 
     void processTextMessage(String fromUser, String contextToken, String text) {
