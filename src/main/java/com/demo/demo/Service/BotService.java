@@ -282,7 +282,7 @@ public class BotService {
 
                             if (item.isVoice()) {
                                 log.info("[iLink] 收到语音探测样本 from={}", fromUser);
-                                processVoiceProbe(fromUser, item.getVoice());
+                                processVoiceProbe(fromUser, contextToken, item.getVoice());
                             }
                         }
                     }
@@ -365,10 +365,11 @@ public class BotService {
         }
     }
 
-    private void processVoiceProbe(String fromUser, VoiceContent voice) {
+    private void processVoiceProbe(String fromUser, String contextToken, VoiceContent voice) {
         Thread.ofVirtual().name("voice-probe").start(() -> {
             if (voice == null) {
                 log.warn("[语音探测] 语音内容为空 from={}", fromUser);
+                sendReply(fromUser, contextToken, "暂时无法识别语音，请发送文字");
                 return;
             }
             long startedAt = System.nanoTime();
@@ -405,9 +406,11 @@ public class BotService {
                         voice.getText() != null && !voice.getText().isBlank(),
                         voice.getText() == null ? 0 : voice.getText().length(),
                         downloadMs);
+                sendReply(fromUser, contextToken, "暂时无法识别语音，请发送文字");
             } catch (Exception e) {
                 log.error("[语音探测] 下载或保存失败 from={} error={}",
                         fromUser, e.getMessage(), e);
+                sendReply(fromUser, contextToken, "暂时无法识别语音，请发送文字");
             }
         });
     }
