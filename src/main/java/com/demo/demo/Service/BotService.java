@@ -71,6 +71,7 @@ public class BotService {
     private final List<String> replyTargetOrder = new CopyOnWriteArrayList<>();
     private final ConcurrentMap<String, Long> processedMessageIds = new ConcurrentHashMap<>();
     private final List<String> processedMessageOrder = new CopyOnWriteArrayList<>();
+    private final ConcurrentMap<String, Object> userReplyLocks = new ConcurrentHashMap<>();
     private String cursor = "";
     private Thread listenThread;
     private Thread loginThread;
@@ -146,6 +147,7 @@ public class BotService {
             replyTargetOrder.clear();
             processedMessageIds.clear();
             processedMessageOrder.clear();
+            userReplyLocks.clear();
             logs.clear();
             cursor = "";
             if (listenThread != null) listenThread.interrupt();
@@ -411,7 +413,12 @@ public class BotService {
 
     private void submitReplyTask(String fromUser, String contextToken, Runnable task) {
         try {
-            replyExecutor.execute(task);
+            Object userLock = userReplyLocks.computeIfAbsent(fromUser, ignored -> new Object());
+            replyExecutor.execute(() -> {
+                synchronized (userLock) {
+                    task.run();
+                }
+            });
         } catch (RejectedExecutionException e) {
             log.warn("[iLink] 自动回复任务队列已满 from={}", fromUser);
             displayLog("自动回复任务较多，已拒绝新任务");
