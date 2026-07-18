@@ -138,24 +138,43 @@
                 }
 
                 if (data.messages && data.messages.length > 0) {
-                    let html = '';
+                    let msgList = document.getElementById('msgList');
                     data.messages.forEach(m => {
-                        knownUsers[m.contextToken] = { userId: m.fromUser, contextToken: m.contextToken };
+                        knownUsers[m.replyId] = { userId: m.fromUser, replyId: m.replyId };
                         let t = new Date(m.time).toLocaleTimeString();
-                        html += `<div class="msg-item">
-                            <span class="user">${m.fromUser}</span>
-                            <span class="text">${m.content}</span>
-                            <span class="time">${t}</span>
-                        </div>`;
+                        let item = document.createElement('div');
+                        item.className = 'msg-item';
+
+                        let user = document.createElement('span');
+                        user.className = 'user';
+                        user.textContent = m.fromUser;
+
+                        let text = document.createElement('span');
+                        text.className = 'text';
+                        text.textContent = m.content;
+
+                        let time = document.createElement('span');
+                        time.className = 'time';
+                        time.textContent = t;
+
+                        item.appendChild(user);
+                        item.appendChild(text);
+                        item.appendChild(time);
+                        msgList.appendChild(item);
                     });
-                    document.getElementById('msgList').innerHTML += html;
                     document.getElementById('msgBox').scrollTop = document.getElementById('msgBox').scrollHeight;
                     updateUserSelect();
                 }
 
                 if (data.logs) {
-                    document.getElementById('logBox').innerHTML = data.logs.map(l => '> ' + l).join('<br>');
-                    document.getElementById('logBox').scrollTop = document.getElementById('logBox').scrollHeight;
+                    let logBox = document.getElementById('logBox');
+                    logBox.replaceChildren();
+                    data.logs.forEach(l => {
+                        let line = document.createElement('div');
+                        line.textContent = '> ' + l;
+                        logBox.appendChild(line);
+                    });
+                    logBox.scrollTop = logBox.scrollHeight;
                 }
             });
     }
@@ -163,22 +182,27 @@
     function updateUserSelect() {
         let sel = document.getElementById('userSelect');
         let current = sel.value;
-        sel.innerHTML = '<option value="">选择回复对象</option>';
+        sel.replaceChildren();
+        let placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = '选择回复对象';
+        sel.appendChild(placeholder);
         Object.values(knownUsers).forEach(u => {
-            sel.innerHTML += `<option value="${u.contextToken}">${u.userId}</option>`;
+            let option = document.createElement('option');
+            option.value = u.replyId;
+            option.textContent = u.userId;
+            sel.appendChild(option);
         });
         if (current) sel.value = current;
     }
 
     function sendReply() {
-        let contextToken = document.getElementById('userSelect').value;
+        let replyId = document.getElementById('userSelect').value;
         let text = document.getElementById('replyInput').value.trim();
-        if (!contextToken || !text) return;
+        if (!replyId || !text) return;
 
-        let u = knownUsers[contextToken];
         let formData = new URLSearchParams();
-        formData.append('toUserId', u.userId);
-        formData.append('contextToken', contextToken);
+        formData.append('replyId', replyId);
         formData.append('text', text);
 
         fetch('/bot/send', { method: 'POST', body: formData })
@@ -195,7 +219,7 @@
                 document.getElementById('qrImage').style.display = 'none';
                 document.getElementById('qrLink').style.display = 'none';
                 document.getElementById('statusText').textContent = '正在重新获取...';
-                document.getElementById('msgList').innerHTML = '';
+                document.getElementById('msgList').replaceChildren();
                 loggedIn = false;
                 document.getElementById('msgBox').style.display = 'none';
                 document.getElementById('replyBox').style.display = 'none';

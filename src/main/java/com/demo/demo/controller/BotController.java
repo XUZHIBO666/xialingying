@@ -14,7 +14,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,7 +45,7 @@ public class BotController {
     public void initAutoReply() {
         log.info("[BotController] 初始化自动回复处理器...");
         botService.setAutoReply((fromUser, contextToken, text) -> {
-            log.info("[自动回复] 收到消息 from={} contextToken={} text={}", fromUser, contextToken, text);
+            log.info("[自动回复] 收到消息 from={} contextToken={} text={}", fromUser, maskToken(contextToken), text);
 
             // 图片生成优先级最高，避免“生成图片...”被普通聊天模型当成闲聊处理。
             if (imageGenerationService.isImageRequest(text)) {
@@ -112,7 +114,7 @@ public class BotController {
         // 图片消息不进入普通文本对话，单独交给视觉模型识别后回复。
         botService.setImageReply((fromUser, contextToken, imageBytes) -> {
             log.info("[自动回复] 收到图片 from={} contextToken={} size={} bytes",
-                    fromUser, contextToken, imageBytes == null ? 0 : imageBytes.length);
+                    fromUser, maskToken(contextToken), imageBytes == null ? 0 : imageBytes.length);
             if (!imageRecognitionService.isConfigured()) {
                 return "图片识别未配置，请管理员设置 VISION_API_KEY 或 IMAGE_API_KEY";
             }
@@ -149,20 +151,28 @@ public class BotController {
     @ResponseBody
     public Map<String, Object> messages() {
         Map<String, Object> map = new HashMap<>();
-        map.put("messages", botService.pollMessages());
+        List<Map<String, Object>> safeMessages = new ArrayList<>();
+        for (BotService.Msg msg : botService.pollMessages()) {
+            Map<String, Object> safeMessage = new HashMap<>();
+            safeMessage.put("fromUser", msg.fromUser);
+            safeMessage.put("replyId", msg.replyId);
+            safeMessage.put("content", msg.content);
+            safeMessage.put("time", msg.time);
+            safeMessages.add(safeMessage);
+        }
+        map.put("messages", safeMessages);
         map.put("logs", botService.getLogs());
         return map;
     }
 
     @PostMapping("/send")
     @ResponseBody
-    public Map<String, Object> send(@RequestParam String toUserId,
-                                     @RequestParam String contextToken,
+    public Map<String, Object> send(@RequestParam String replyId,
                                      @RequestParam String text) {
-        log.info("[BotController] 手动发送消息 to={} text={}", toUserId, text);
-        botService.sendReply(toUserId, contextToken, text);
+        log.info("[BotController] 手动发送消息 replyId={} text={}", replyId, text);
+        boolean sent = botService.sendManualReply(replyId, text);
         Map<String, Object> map = new HashMap<>();
-        map.put("ok", true);
+        map.put("ok", sent);
         return map;
     }
 
@@ -201,5 +211,11 @@ public class BotController {
         }
 
         return before.isEmpty() ? null : before;
+    }
+
+    private static String maskToken(String token) {
+        if (token == null || token.isBlank()) return "null";
+        if (token.length() <= 8) return "***";
+        return token.substring(0, 4) + "..." + token.substring(token.length() - 4);
     }
 }

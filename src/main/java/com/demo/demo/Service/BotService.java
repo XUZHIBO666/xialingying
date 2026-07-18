@@ -15,12 +15,15 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
@@ -46,6 +49,7 @@ public class BotService {
 
     private static final int REPLY_WORKER_COUNT = 2;
     private static final int REPLY_QUEUE_CAPACITY = 20;
+    private static final int REPLY_TARGET_CAPACITY = 200;
     private static final AtomicInteger REPLY_THREAD_SEQUENCE = new AtomicInteger();
 
     private final ILinkClient client;
@@ -61,6 +65,8 @@ public class BotService {
     // 消息和日志
     private final List<String> logs = new CopyOnWriteArrayList<>();
     private final List<Msg> messages = new CopyOnWriteArrayList<>();
+    private final ConcurrentMap<String, ReplyTarget> replyTargets = new ConcurrentHashMap<>();
+    private final List<String> replyTargetOrder = new CopyOnWriteArrayList<>();
     private String cursor = "";
     private Thread listenThread;
     private Thread loginThread;
@@ -132,6 +138,8 @@ public class BotService {
             qrCodeBase64.set(null);
             qrCodeUrl.set(null);
             messages.clear();
+            replyTargets.clear();
+            replyTargetOrder.clear();
             logs.clear();
             cursor = "";
             if (listenThread != null) listenThread.interrupt();
@@ -237,13 +245,14 @@ public class BotService {
                             if (item.isText()) {
                                 String text = item.getText();
                                 log.info("[iLink] 收到消息 from={} contextToken={} text={}",
-                                        fromUser, contextToken, text);
+                                        fromUser, maskToken(contextToken), text);
                                 processTextMessage(fromUser, contextToken, text);
                                 continue;
                             }
 
                             if (item.isImage()) {
-                                log.info("[iLink] 收到图片 from={} contextToken={}", fromUser, contextToken);
+                                log.info("[iLink] 收到图片 from={} contextToken={}",
+                                        fromUser, maskToken(contextToken));
                                 processImageItem(fromUser, contextToken, item.getImage());
                                 continue;
                             }
@@ -274,7 +283,7 @@ public class BotService {
     }
 
     void processTextMessage(String fromUser, String contextToken, String text) {
-        Msg msg = new Msg(fromUser, contextToken, text);
+        Msg msg = new Msg(fromUser, rememberReplyTarget(fromUser, contextToken), text);
         messages.add(msg);
         displayLog(fromUser + ": " + text);
 
@@ -367,7 +376,7 @@ public class BotService {
     }
 
     void processImageMessage(String fromUser, String contextToken, byte[] imageBytes) {
-        messages.add(new Msg(fromUser, contextToken, "[图片]"));
+        messages.add(new Msg(fromUser, rememberReplyTarget(fromUser, contextToken), "[图片]"));
         displayLog(fromUser + ": [图片]");
 
         // 图片识别和文本自动回复分开注册，避免普通文本 AI 误处理图片消息。
@@ -406,7 +415,7 @@ public class BotService {
         }
         try {
             log.info("[iLink] 发送文本消息 to={} contextToken={} text={}",
-                    toUserId, contextToken, text);
+                    toUserId, maskToken(contextToken), text);
             client.sendTextMessage(credentials.get(), toUserId, contextToken, text);
             log.info("[iLink] 文本消息发送成功 to={}", toUserId);
             displayLog("回复 -> " + toUserId + ": " + text);
@@ -414,6 +423,17 @@ public class BotService {
             log.error("[iLink] 文本消息发送失败 to={} error={}", toUserId, e.getMessage(), e);
             displayLog("发送失败: " + e.getMessage());
         }
+    }
+
+    public boolean sendManualReply(String replyId, String text) {
+        ReplyTarget target = replyTargets.get(replyId);
+        if (target == null) {
+            log.warn("[iLink] 手动发送失败：replyId 无效");
+            displayLog("手动发送失败：回复对象已失效");
+            return false;
+        }
+        sendReply(target.toUserId(), target.contextToken(), text);
+        return true;
     }
 
     /** 发送图片回复 */
@@ -461,6 +481,23 @@ public class BotService {
     private void displayLog(String msg) {
         logs.add(msg);
         if (logs.size() > 200) logs.remove(0);
+    }
+
+    private synchronized String rememberReplyTarget(String fromUser, String contextToken) {
+        String replyId = UUID.randomUUID().toString();
+        replyTargets.put(replyId, new ReplyTarget(fromUser, contextToken));
+        replyTargetOrder.add(replyId);
+        while (replyTargetOrder.size() > REPLY_TARGET_CAPACITY) {
+            String expiredId = replyTargetOrder.remove(0);
+            replyTargets.remove(expiredId);
+        }
+        return replyId;
+    }
+
+    private static String maskToken(String token) {
+        if (token == null || token.isBlank()) return "null";
+        if (token.length() <= 8) return "***";
+        return token.substring(0, 4) + "..." + token.substring(token.length() - 4);
     }
 
     /** 把 SDK 返回的各种格式统一转成纯 base64（前端 img 标签直接用） */
@@ -528,14 +565,17 @@ public class BotService {
 
     public static class Msg {
         public String fromUser;
-        public String contextToken;
+        public String replyId;
         public String content;
         public long time = System.currentTimeMillis();
 
-        public Msg(String f, String c, String t) {
+        public Msg(String f, String r, String t) {
             fromUser = f;
-            contextToken = c;
+            replyId = r;
             content = t;
         }
+    }
+
+    private record ReplyTarget(String toUserId, String contextToken) {
     }
 }
