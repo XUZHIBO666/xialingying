@@ -51,6 +51,15 @@ class BotPageSecurityTest {
     }
 
     @Test
+    void botPageStoresAdminTokenInSessionHeaderAndRemovesQueryToken() throws Exception {
+        String html = Files.readString(Path.of("src/main/resources/templates/bot.html"));
+
+        assertTrue(html.contains("sessionStorage.setItem('BOT_ADMIN_TOKEN'"));
+        assertTrue(html.contains("'X-Bot-Admin-Token'"));
+        assertTrue(html.contains("window.history.replaceState"));
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void manualReplyUsesReplyIdWithoutExposingContextToken() throws Exception {
         ILinkClient client = mock(ILinkClient.class);

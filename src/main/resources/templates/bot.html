@@ -93,10 +93,20 @@
 <script>
     let knownUsers = {};
     let loggedIn = false;
+    const adminTokenParam = new URLSearchParams(window.location.search).get('adminToken');
+    if (adminTokenParam) {
+        sessionStorage.setItem('BOT_ADMIN_TOKEN', adminTokenParam);
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    function authHeaders() {
+        const token = sessionStorage.getItem('BOT_ADMIN_TOKEN');
+        return token ? { 'X-Bot-Admin-Token': token } : {};
+    }
 
     // ===== 拉取状态 =====
     function pollStatus() {
-        fetch('/bot/status')
+        fetch('/bot/status', { headers: authHeaders() })
             .then(r => r.json())
             .then(data => {
                 loggedIn = data.loggedIn;
@@ -129,7 +139,7 @@
 
     // ===== 拉取消息 =====
     function pollMessages() {
-        fetch('/bot/messages')
+        fetch('/bot/messages', { headers: authHeaders() })
             .then(r => r.json())
             .then(data => {
                 if (loggedIn) {
@@ -205,7 +215,7 @@
         formData.append('replyId', replyId);
         formData.append('text', text);
 
-        fetch('/bot/send', { method: 'POST', body: formData })
+        fetch('/bot/send', { method: 'POST', headers: authHeaders(), body: formData })
             .then(r => r.json())
             .then(data => {
                 if (data.ok) document.getElementById('replyInput').value = '';
@@ -213,7 +223,7 @@
     }
 
     function restartLogin() {
-        fetch('/bot/restart', { method: 'POST' })
+        fetch('/bot/restart', { method: 'POST', headers: authHeaders() })
             .then(() => {
                 document.getElementById('qrPlaceholder').style.display = 'flex';
                 document.getElementById('qrImage').style.display = 'none';
