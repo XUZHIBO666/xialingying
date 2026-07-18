@@ -50,6 +50,8 @@ public class BotService {
     private static final int REPLY_WORKER_COUNT = 2;
     private static final int REPLY_QUEUE_CAPACITY = 20;
     private static final int REPLY_TARGET_CAPACITY = 200;
+    private static final int PROCESSED_MESSAGE_CAPACITY = 1000;
+    private static final long PROCESSED_MESSAGE_TTL_MS = TimeUnit.MINUTES.toMillis(10);
     private static final AtomicInteger REPLY_THREAD_SEQUENCE = new AtomicInteger();
 
     private final ILinkClient client;
@@ -67,6 +69,8 @@ public class BotService {
     private final List<Msg> messages = new CopyOnWriteArrayList<>();
     private final ConcurrentMap<String, ReplyTarget> replyTargets = new ConcurrentHashMap<>();
     private final List<String> replyTargetOrder = new CopyOnWriteArrayList<>();
+    private final ConcurrentMap<String, Long> processedMessageIds = new ConcurrentHashMap<>();
+    private final List<String> processedMessageOrder = new CopyOnWriteArrayList<>();
     private String cursor = "";
     private Thread listenThread;
     private Thread loginThread;
@@ -140,6 +144,8 @@ public class BotService {
             messages.clear();
             replyTargets.clear();
             replyTargetOrder.clear();
+            processedMessageIds.clear();
+            processedMessageOrder.clear();
             logs.clear();
             cursor = "";
             if (listenThread != null) listenThread.interrupt();
@@ -241,6 +247,13 @@ public class BotService {
                         for (MessageItemDto item : dto.getItemList()) {
                             String fromUser = dto.getFromUserId();
                             String contextToken = dto.getContextToken();
+                            String messageId = String.valueOf(dto.getMessageId());
+                            String itemMsgId = String.valueOf(item.getMsgId());
+                            if (!markInboundMessageIfNew(messageId, itemMsgId)) {
+                                log.info("[iLink] 忽略重复消息 messageId={} msgId={}",
+                                        maskToken(messageId), maskToken(itemMsgId));
+                                continue;
+                            }
 
                             if (item.isText()) {
                                 String text = item.getText();
@@ -481,6 +494,47 @@ public class BotService {
     private void displayLog(String msg) {
         logs.add(msg);
         if (logs.size() > 200) logs.remove(0);
+    }
+
+    synchronized boolean markInboundMessageIfNew(String messageId, String itemMsgId) {
+        String key = dedupKey(messageId, itemMsgId);
+        if (key == null) return true;
+
+        long now = System.currentTimeMillis();
+        evictProcessedMessages(now);
+        Long firstSeenAt = processedMessageIds.get(key);
+        if (firstSeenAt != null && now - firstSeenAt <= PROCESSED_MESSAGE_TTL_MS) {
+            return false;
+        }
+
+        processedMessageIds.put(key, now);
+        processedMessageOrder.add(key);
+        evictProcessedMessages(now);
+        return true;
+    }
+
+    private String dedupKey(String messageId, String itemMsgId) {
+        if (hasMessageId(itemMsgId)) return "item:" + itemMsgId;
+        if (hasMessageId(messageId)) return "message:" + messageId;
+        return null;
+    }
+
+    private boolean hasMessageId(String id) {
+        return id != null && !id.isBlank() && !"0".equals(id);
+    }
+
+    private void evictProcessedMessages(long now) {
+        while (!processedMessageOrder.isEmpty()) {
+            String oldestKey = processedMessageOrder.get(0);
+            Long firstSeenAt = processedMessageIds.get(oldestKey);
+            boolean expired = firstSeenAt == null || now - firstSeenAt > PROCESSED_MESSAGE_TTL_MS;
+            boolean overCapacity = processedMessageIds.size() > PROCESSED_MESSAGE_CAPACITY;
+            if (!expired && !overCapacity) return;
+            processedMessageOrder.remove(0);
+            if (firstSeenAt != null && (expired || overCapacity)) {
+                processedMessageIds.remove(oldestKey, firstSeenAt);
+            }
+        }
     }
 
     private synchronized String rememberReplyTarget(String fromUser, String contextToken) {
