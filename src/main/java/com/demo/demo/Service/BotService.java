@@ -1,5 +1,7 @@
 package com.demo.demo.Service;
 
+import com.demo.demo.Service.voice.VoiceMessageHandler;
+import com.demo.demo.Service.voice.VoiceProcessingService;
 import com.lth.wechat.ilink.ILinkClient;
 import com.lth.wechat.ilink.LoginCredentials;
 import com.lth.wechat.ilink.dto.message.ImageContent;
@@ -15,18 +17,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -54,6 +54,7 @@ public class BotService {
     private static final int PROCESSED_MESSAGE_CAPACITY = 1000;
     private static final long PROCESSED_MESSAGE_TTL_MS = TimeUnit.MINUTES.toMillis(10);
     private static final AtomicInteger REPLY_THREAD_SEQUENCE = new AtomicInteger();
+    private static final AtomicInteger VOICE_THREAD_SEQUENCE = new AtomicInteger();
 
     private final ILinkClient client;
     private final ExecutorService replyExecutor;
@@ -82,6 +83,7 @@ public class BotService {
     // 自动回复处理器
     private volatile ReplyHandler autoReplyHandler;
     private volatile ImageReplyHandler imageReplyHandler;
+    private volatile VoiceMessageHandler voiceMessageHandler;
 
     public BotService() {
         this(new ILinkClient(), createReplyExecutor());
@@ -281,8 +283,8 @@ public class BotService {
                             }
 
                             if (item.isVoice()) {
-                                log.info("[iLink] 收到语音探测样本 from={}", fromUser);
-                                processVoiceProbe(fromUser, contextToken, item.getVoice());
+                                log.info("[iLink] 收到语音消息 from={}", fromUser);
+                                processVoiceMessage(fromUser, contextToken, item.getVoice());
                             }
                         }
                     }
@@ -324,19 +326,8 @@ public class BotService {
         messages.add(msg);
         displayLog(fromUser + ": " + text);
 
-        // --- 自动回复 ---
-        ReplyHandler handler = autoReplyHandler;
-        if (handler != null) {
-            submitReplyTask(fromUser, contextToken, () -> {
-                try {
-                    String reply = handler.onMessage(fromUser, contextToken, text);
-                    if (reply != null && !reply.isEmpty()) {
-                        sendReply(fromUser, contextToken, reply);
-                    }
-                } catch (Exception e) {
-                    log.error("[iLink] 自动回复处理异常: {}", e.getMessage(), e);
-                }
-            });
+        if (autoReplyHandler != null) {
+            submitReplyTask(fromUser, contextToken, () -> runAutoReply(fromUser, contextToken, text));
         }
     }
 
@@ -365,54 +356,61 @@ public class BotService {
         }
     }
 
-    private void processVoiceProbe(String fromUser, String contextToken, VoiceContent voice) {
-        Thread.ofVirtual().name("voice-probe").start(() -> {
-            if (voice == null) {
-                log.warn("[语音探测] 语音内容为空 from={}", fromUser);
-                sendReply(fromUser, contextToken, "暂时无法识别语音，请发送文字");
-                return;
-            }
-            long startedAt = System.nanoTime();
-            try {
-                byte[] voiceBytes = client.downloadMedia(
-                        voice.getEncryptQueryParam(),
-                        voice.getAesKey());
-                long downloadMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
-                Path probeDirectory = Path.of("target", "voice-probe");
-                Files.createDirectories(probeDirectory);
-                String sampleName = "voice-" + System.currentTimeMillis();
-                Path sampleFile = probeDirectory.resolve(sampleName + ".bin");
-                Files.write(sampleFile, voiceBytes);
-                Path transcriptFile = probeDirectory.resolve(sampleName + ".transcript.txt");
-                Files.writeString(transcriptFile, voice.getText() == null ? "" : voice.getText());
+    private void processVoiceMessage(String fromUser, String contextToken, VoiceContent voice) {
+        VoiceMessageHandler handler = voiceMessageHandler;
+        if (voice == null || handler == null) {
+            sendReply(fromUser, contextToken, "抱歉，语音识别遇到问题，可以再试一次或直接打字告诉我～");
+            return;
+        }
 
-                int headerLength = Math.min(16, voiceBytes.length);
-                String headerHex = HexFormat.of().formatHex(voiceBytes, 0, headerLength);
-                long bitrate = voice.getPlaytime() > 0
-                        ? voiceBytes.length * 8_000L / voice.getPlaytime()
-                        : 0;
-                log.info("[语音探测] from={} file={} encodeType={} sampleRate={} bitsPerSample={} "
-                                + "playtimeMs={} bytes={} estimatedBitrate={}bps headerHex={} "
-                                + "officialTextPresent={} officialTextLength={} downloadMs={}",
+        submitReplyTask(fromUser, contextToken, () -> {
+            long totalStart = System.nanoTime();
+            FutureTask<VoiceProcessingService.Result> task = new FutureTask<>(
+                    () -> handler.handle(voice, () -> client.downloadMedia(
+                            voice.getEncryptQueryParam(), voice.getAesKey())));
+            Thread.ofVirtual()
+                    .name("voice-process-" + VOICE_THREAD_SEQUENCE.incrementAndGet())
+                    .start(task);
+            try {
+                VoiceProcessingService.Result result = task.get();
+                messages.add(new Msg(fromUser, rememberReplyTarget(fromUser, contextToken),
+                        "[语音] " + result.text()));
+                displayLog(fromUser + ": [语音] " + result.text());
+                log.info("[语音处理] from={} source={} downloadMs={} convertMs={} asrMs={} totalBeforeLlmMs={}",
+                        fromUser, result.source(), result.downloadMs(), result.convertMs(), result.asrMs(),
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
+
+                long llmStart = System.nanoTime();
+                runAutoReply(fromUser, contextToken, result.text());
+                log.info("[语音处理] from={} llmAndReplyMs={} totalMs={}",
                         fromUser,
-                        sampleFile.toAbsolutePath(),
-                        voice.getEncodeType(),
-                        voice.getSampleRate(),
-                        voice.getBitsPerSample(),
-                        voice.getPlaytime(),
-                        voiceBytes.length,
-                        bitrate,
-                        headerHex,
-                        voice.getText() != null && !voice.getText().isBlank(),
-                        voice.getText() == null ? 0 : voice.getText().length(),
-                        downloadMs);
-                sendReply(fromUser, contextToken, "暂时无法识别语音，请发送文字");
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - llmStart),
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("[语音处理] 任务被中断 from={}", fromUser);
+                sendReply(fromUser, contextToken, "抱歉，语音识别遇到问题，可以再试一次或直接打字告诉我～");
             } catch (Exception e) {
-                log.error("[语音探测] 下载或保存失败 from={} error={}",
-                        fromUser, e.getMessage(), e);
-                sendReply(fromUser, contextToken, "暂时无法识别语音，请发送文字");
+                log.error("[语音处理] 处理失败 from={} error={}", fromUser, e.getMessage(), e);
+                sendReply(fromUser, contextToken, "抱歉，语音识别遇到问题，可以再试一次或直接打字告诉我～");
             }
         });
+    }
+
+    private void runAutoReply(String fromUser, String contextToken, String text) {
+        ReplyHandler handler = autoReplyHandler;
+        if (handler == null) {
+            return;
+        }
+        try {
+            String reply = handler.onMessage(fromUser, contextToken, text);
+            if (reply != null && !reply.isEmpty()) {
+                sendReply(fromUser, contextToken, reply);
+            }
+        } catch (Exception e) {
+            log.error("[iLink] 自动回复处理异常: {}", e.getMessage(), e);
+            sendReply(fromUser, contextToken, "抱歉，处理消息时遇到问题，请稍后再试。");
+        }
     }
 
     void processImageMessage(String fromUser, String contextToken, byte[] imageBytes) {
@@ -635,6 +633,11 @@ public class BotService {
     public void setImageReply(ImageReplyHandler handler) {
         this.imageReplyHandler = handler;
         log.info("[iLink] 图片识别处理器已设置");
+    }
+
+    public void setVoiceMessageHandler(VoiceMessageHandler handler) {
+        this.voiceMessageHandler = handler;
+        log.info("[iLink] 语音处理器已设置");
     }
 
     @FunctionalInterface

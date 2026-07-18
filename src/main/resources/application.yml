@@ -34,3 +34,13 @@ ai:
       url: ${VISION_API_URL:https://api.siliconflow.cn}
     model: ${VISION_MODEL:Qwen/Qwen3-VL-8B-Instruct}
     prompt: ${VISION_PROMPT:请用中文简洁描述这张图片的主要内容，如果图片中有文字也请读出来。}
+  voice:
+    asr:
+      api-key: ${VOICE_ASR_API_KEY:}
+      api-url: ${VOICE_ASR_API_URL:https://api.siliconflow.cn}
+      model: ${VOICE_ASR_MODEL:FunAudioLLM/SenseVoiceSmall}
+      timeout: ${VOICE_ASR_TIMEOUT:60s}
+    audio:
+      silk-decoder-path: ${VOICE_SILK_DECODER_PATH:}
+      ffmpeg-path: ${VOICE_FFMPEG_PATH:ffmpeg}
+      process-timeout: ${VOICE_AUDIO_PROCESS_TIMEOUT:30s}

@@ -4,6 +4,7 @@ import com.demo.demo.Service.AIService;
 import com.demo.demo.Service.BotService;
 import com.demo.demo.Service.ImageGenerationService;
 import com.demo.demo.Service.ImageRecognitionService;
+import com.demo.demo.Service.voice.VoiceMessageHandler;
 import com.demo.demo.Utils.WeatherUtil;
 import com.demo.demo.execption.BizException;
 import jakarta.annotation.PostConstruct;
@@ -38,6 +39,9 @@ public class BotController {
 
     @Resource
     private ImageRecognitionService imageRecognitionService;
+
+    @Resource
+    private VoiceMessageHandler voiceMessageHandler;
 
     // ==================== 初始化：设置自动回复 ====================
 
@@ -120,6 +124,7 @@ public class BotController {
             }
             return imageRecognitionService.recognize(imageBytes);
         });
+        botService.setVoiceMessageHandler(voiceMessageHandler);
         log.info("[BotController] 自动回复处理器初始化完成");
     }
 

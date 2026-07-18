@@ -1,6 +1,6 @@
 # 语音功能开发前探测记录
 
-> 状态：**探测进行中，尚未通过阶段 1 门禁**  
+> 状态：**阶段 1 探测完成，已进入语音输入一期实现**
 > 记录日期：2026-07-18  
 > 范围：本文件只记录探测证据，不代表已经确定 ASR、转码或语音发送方案。
 
@@ -58,8 +58,17 @@ text
 准确率。探测代码现已改为把转写单独保存在 Git 忽略的
 `target/voice-probe/*.transcript.txt` 文件中，且不向应用日志打印完整转写。
 
-**决策状态：待定。** 需要重启应用后再发送三条内容已知的测试语音，完成准确率核对；
-在此之前不能在“使用官方文本字段”“自建 ASR”或“两者都保留”中提前选择。
+**决策：两者都保留，官方字段作为降级兜底。**
+
+理由：三条真实样本证明官方 `text` 字段在首次到达时均非空，但历史探测没有保存原文，
+无法证明数字、英文和噪声场景下的准确率，因此不能完全依赖官方文本。SiliconFlow 已提供
+`POST /v1/audio/transcriptions` multipart ASR 接口，支持
+`FunAudioLLM/SenseVoiceSmall` 和 `TeleAI/TeleSpeechASR`，单文件上限 50MB、时长上限 1 小时。
+一期使用 SILK→PCM→WAV→SiliconFlow ASR 主链；转换工具未配置、ASR 未配置或调用失败时，
+如果官方 `text` 非空则使用它继续进入 LLM，否则向用户发送友好失败提示。
+
+平台证据：SiliconFlow 官方接口文档
+<https://docs.siliconflow.cn/cn/api-reference/audio/create-audio-transcriptions>。
 
 ## 3. 真实语音字节流格式探测
 
@@ -253,10 +262,10 @@ WinGet 安装命令。安装后需要重新打开 IDEA/终端，再执行 `ffmpe
 E:\summer-projects\silk-v3-decoder-reference\silk\decoder.exe
 ```
 
-这些工具目前位于项目仓库之外，不会被提交到 Git。是否把解码器作为正式部署依赖，
-由官方文本准确率复测和 ASR 决策决定。
+这些工具目前位于项目仓库之外，不会被提交到 Git。正式运行时通过
+`VOICE_SILK_DECODER_PATH` 和 `VOICE_FFMPEG_PATH` 配置路径。
 
-## 6. 下一次真实探测步骤
+## 6. 一期实现后的真实验收步骤
 
 1. 在 IDEA 中停止当前应用并重新运行，使保存本地转写的新探测代码生效。
 2. 用测试账号重新扫码登录 Bot。
@@ -264,10 +273,7 @@ E:\summer-projects\silk-v3-decoder-reference\silk\decoder.exe
    - 安静环境：“你好，请介绍一下杭州。”
    - 少量环境噪声：“今天天气怎么样？”
    - 数字和英文：“订单二零二六，项目名称 OpenClaw。”
-4. 检查 IDEA 控制台是否出现“收到语音探测样本”和“语音探测完成”。
-5. 检查 `target/voice-probe/` 是否新增三个 `.bin` 和三个 `.transcript.txt` 文件。
-6. 对照三句原文检查 `.transcript.txt`。
-7. 把准确率结果补入本文件，并完成官方文本/自建 ASR 的三选一结论。
-
-只有第 2～5 节全部得到完整结论后，才允许开始 `AudioConverter`、`AsrService`
-和正式语音消息处理业务代码。
+4. 检查 IDEA 控制台中的 `downloadMs`、`convertMs`、`asrMs`、`llmAndReplyMs` 和 `totalMs`。
+5. 确认三条语音均收到基于语音内容生成的文字回复。
+6. 临时填错 `VOICE_ASR_API_KEY`，确认官方 `text` 非空时仍可降级回复。
+7. 同时让 ASR 和官方文本不可用，确认微信收到友好失败提示，监听线程继续运行。
