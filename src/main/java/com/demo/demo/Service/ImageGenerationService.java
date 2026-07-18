@@ -16,6 +16,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.net.Inet4Address;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -39,6 +44,7 @@ public class ImageGenerationService {
     private static final long[] RETRY_DELAYS_MILLIS = {500L, 1000L};
 
     private final OkHttpClient httpClient;
+    private final OkHttpClient downloadHttpClient;
     private final Gson gson = new Gson();
     private final String apiKey;
     private final String apiUrl;
@@ -64,6 +70,10 @@ public class ImageGenerationService {
         this.model = model;
         this.size = size;
         this.httpClient = httpClient;
+        this.downloadHttpClient = httpClient.newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build();
     }
 
     public boolean isConfigured() {
@@ -160,6 +170,7 @@ public class ImageGenerationService {
     }
 
     private byte[] downloadImage(String url) throws IOException {
+        validateDownloadUrl(url);
         Request request = new Request.Builder().url(url).build();
         try (Response response = executeDownloadRequest(request)) {
             if (!response.isSuccessful()) {
@@ -190,7 +201,7 @@ public class ImageGenerationService {
     private Response executeDownloadRequest(Request request) throws IOException {
         for (int attempt = 1; attempt <= MAX_HTTP_ATTEMPTS; attempt++) {
             try {
-                Response response = httpClient.newCall(request).execute();
+                Response response = downloadHttpClient.newCall(request).execute();
                 if (!isRetryableDownloadStatus(response.code()) || attempt == MAX_HTTP_ATTEMPTS) {
                     return response;
                 }
@@ -206,6 +217,59 @@ public class ImageGenerationService {
             waitBeforeRetry(attempt);
         }
         throw new IOException("图片下载请求未完成");
+    }
+
+    private void validateDownloadUrl(String url) throws IOException {
+        URI uri;
+        try {
+            uri = new URI(url);
+        } catch (URISyntaxException e) {
+            throw new IOException("图片下载 URL 不合法", e);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme())) {
+            throw new IOException("图片下载 URL 必须使用 HTTPS");
+        }
+        if (uri.getUserInfo() != null) {
+            throw new IOException("图片下载 URL 不安全");
+        }
+
+        String host = uri.getHost();
+        if (host == null || host.isBlank()) {
+            throw new IOException("图片下载 URL 缺少主机");
+        }
+        for (InetAddress address : InetAddress.getAllByName(host)) {
+            if (isUnsafeAddress(address)) {
+                throw new IOException("图片下载 URL 不安全");
+            }
+        }
+    }
+
+    private boolean isUnsafeAddress(InetAddress address) {
+        if (address.isAnyLocalAddress()
+                || address.isLoopbackAddress()
+                || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress()
+                || address.isMulticastAddress()) {
+            return true;
+        }
+
+        byte[] bytes = address.getAddress();
+        if (address instanceof Inet4Address && bytes.length == 4) {
+            int first = bytes[0] & 0xff;
+            int second = bytes[1] & 0xff;
+            return first == 0
+                    || first == 10
+                    || first == 127
+                    || (first == 100 && second >= 64 && second <= 127)
+                    || (first == 169 && second == 254)
+                    || (first == 172 && second >= 16 && second <= 31)
+                    || (first == 192 && second == 168);
+        }
+        if (address instanceof Inet6Address && bytes.length == 16) {
+            int first = bytes[0] & 0xff;
+            return (first & 0xfe) == 0xfc;
+        }
+        return false;
     }
 
     private boolean isRetryableGenerationStatus(int statusCode) {

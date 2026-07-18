@@ -3,6 +3,9 @@ package com.demo.demo.Service;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -70,7 +73,7 @@ class ImageGenerationServiceTest {
         byte[] expected = "downloaded-image".getBytes(StandardCharsets.UTF_8);
         startServer(exchange -> {
             if ("/v1/images/generations".equals(exchange.getRequestURI().getPath())) {
-                String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/generated.png";
+                String url = "https://93.184.216.34/downloaded-image";
                 send(exchange, 200, "{\"data\":[{\"url\":\"" + url + "\"}]}");
                 return;
             }
@@ -87,7 +90,7 @@ class ImageGenerationServiceTest {
         byte[] expected = "siliconflow-image".getBytes(StandardCharsets.UTF_8);
         startServer(exchange -> {
             if ("/v1/images/generations".equals(exchange.getRequestURI().getPath())) {
-                String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/generated.png";
+                String url = "https://93.184.216.34/siliconflow-image";
                 send(exchange, 200, "{\"images\":[{\"url\":\"" + url + "\"}]}");
                 return;
             }
@@ -97,6 +100,28 @@ class ImageGenerationServiceTest {
         byte[] actual = service().generateImage("一只在月球上的橘猫");
 
         assertArrayEquals(expected, actual);
+    }
+
+    @Test
+    void rejectsGeneratedImageUrlThatUsesHttp() throws Exception {
+        startServer(exchange ->
+                send(exchange, 200, "{\"data\":[{\"url\":\"http://93.184.216.34/generated.png\"}]}"));
+
+        IOException exception = assertThrows(IOException.class,
+                () -> service().generateImage("unsafe-http-url"));
+
+        assertTrue(exception.getMessage().contains("HTTPS"));
+    }
+
+    @Test
+    void rejectsGeneratedImageUrlThatTargetsLocalhost() throws Exception {
+        startServer(exchange ->
+                send(exchange, 200, "{\"data\":[{\"url\":\"https://127.0.0.1/generated.png\"}]}"));
+
+        IOException exception = assertThrows(IOException.class,
+                () -> service().generateImage("unsafe-local-url"));
+
+        assertTrue(exception.getMessage().contains("不安全"));
     }
 
     @Test
@@ -179,18 +204,23 @@ class ImageGenerationServiceTest {
         AtomicInteger downloadAttempts = new AtomicInteger();
         startServer(exchange -> {
             if ("/v1/images/generations".equals(exchange.getRequestURI().getPath())) {
-                String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/generated.png";
+                String url = "https://93.184.216.34/generated.png";
                 send(exchange, 200, "{\"data\":[{\"url\":\"" + url + "\"}]}");
-                return;
             }
-            if (downloadAttempts.incrementAndGet() == 1) {
-                send(exchange, 503, "temporarily unavailable");
-                return;
-            }
-            send(exchange, 200, expected);
         });
+        OkHttpClient client = new OkHttpClient.Builder()
+                .addInterceptor(chain -> {
+                    if (!"/generated.png".equals(chain.request().url().encodedPath())) {
+                        return chain.proceed(chain.request());
+                    }
+                    if (downloadAttempts.incrementAndGet() == 1) {
+                        return response(chain.request(), 503, "Service Unavailable", "temporarily unavailable");
+                    }
+                    return response(chain.request(), 200, "OK", expected);
+                })
+                .build();
 
-        byte[] actual = service().generateImage("下载重试");
+        byte[] actual = service(client).generateImage("下载重试");
 
         assertArrayEquals(expected, actual);
         assertEquals(2, downloadAttempts.get());
@@ -202,7 +232,7 @@ class ImageGenerationServiceTest {
         AtomicInteger downloadAttempts = new AtomicInteger();
         startServer(exchange -> {
             if ("/v1/images/generations".equals(exchange.getRequestURI().getPath())) {
-                String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/generated.png";
+                String url = "https://93.184.216.34/generated.png";
                 send(exchange, 200, "{\"data\":[{\"url\":\"" + url + "\"}]}");
                 return;
             }
@@ -210,19 +240,16 @@ class ImageGenerationServiceTest {
         });
         OkHttpClient client = new OkHttpClient.Builder()
                 .addInterceptor(chain -> {
-                    if ("/generated.png".equals(chain.request().url().encodedPath())
-                            && downloadAttempts.incrementAndGet() == 1) {
-                        throw new IOException("download interrupted");
+                    if ("/generated.png".equals(chain.request().url().encodedPath())) {
+                        if (downloadAttempts.incrementAndGet() == 1) {
+                            throw new IOException("download interrupted");
+                        }
+                        return response(chain.request(), 200, "OK", expected);
                     }
                     return chain.proceed(chain.request());
                 })
                 .build();
-        ImageGenerationService service = new ImageGenerationService(
-                "test-key",
-                "http://127.0.0.1:" + server.getAddress().getPort(),
-                "test-image",
-                "256x256",
-                client);
+        ImageGenerationService service = service(client);
 
         byte[] actual = service.generateImage("下载网络重试");
 
@@ -240,12 +267,38 @@ class ImageGenerationServiceTest {
     }
 
     private ImageGenerationService service() {
+        return service(new OkHttpClient.Builder()
+                .addInterceptor(chain -> {
+                    if ("93.184.216.34".equals(chain.request().url().host())) {
+                        String body = chain.request().url().encodedPath().replaceFirst("^/", "");
+                        return response(chain.request(), 200, "OK", body);
+                    }
+                    return chain.proceed(chain.request());
+                })
+                .build());
+    }
+
+    private ImageGenerationService service(OkHttpClient client) {
         return new ImageGenerationService(
                 "test-key",
                 "http://127.0.0.1:" + server.getAddress().getPort(),
                 "test-image",
                 "256x256",
-                new OkHttpClient());
+                client);
+    }
+
+    private Response response(Request request, int code, String message, String body) {
+        return response(request, code, message, body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private Response response(Request request, int code, String message, byte[] body) {
+        return new Response.Builder()
+                .request(request)
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(code)
+                .message(message)
+                .body(ResponseBody.create(body, null))
+                .build();
     }
 
     private void startServer(ExchangeHandler handler) throws IOException {
