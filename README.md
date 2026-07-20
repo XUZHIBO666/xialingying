@@ -81,6 +81,19 @@ http://localhost:8080/bot
 mvn test
 ```
 
+## 持久化对话记忆
+
+LLM 会按微信用户保存最近 10 轮完整对话，文字和语音入口共用同一份记忆。默认文件是
+`./data/conversation-memory.json`，应用重启后会自动恢复。可通过环境变量修改路径：
+
+```text
+AI_MEMORY_FILE=E:/summer-projects/xialingying-data/conversation-memory.json
+```
+
+`data/` 已加入 `.gitignore`，不要提交其中的聊天内容。停止应用后删除记忆文件可清空所有用户历史；代码调用
+`AIService.clearHistory(userId)` 只清空指定用户。验证重启记忆时，先发送“我叫小明，请记住我的名字”，重启应用，
+再发送“我叫什么名字？”，回复应包含“小明”。
+
 新增测试覆盖：
 
 - 图片触发词识别和提示词提取。

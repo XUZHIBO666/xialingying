@@ -3,6 +3,8 @@
 # application-local.yml 已在 .gitignore 中，不会提交到 Git
 
 ai:
+  memory:
+    file: ./data/conversation-memory.json
   api:
     key: your-api-key-here
   image:

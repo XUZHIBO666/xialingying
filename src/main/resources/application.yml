@@ -17,6 +17,8 @@ spring:
     name: demo
 
 ai:
+  memory:
+    file: ${AI_MEMORY_FILE:./data/conversation-memory.json}
   api:
     key: ${AI_API_KEY:}
     url: https://api.deepseek.com
