@@ -1,7 +1,7 @@
 package com.demo.demo.Service;
 
 import com.demo.demo.Service.voice.VoiceMessageHandler;
-import com.demo.demo.Service.voice.VoiceProcessingService;
+import com.demo.demo.Service.voice.VoiceMessageService;
 import com.lth.wechat.ilink.ILinkClient;
 import com.lth.wechat.ilink.LoginCredentials;
 import com.lth.wechat.ilink.dto.message.ImageContent;
@@ -359,40 +359,36 @@ public class BotService {
     private void processVoiceMessage(String fromUser, String contextToken, VoiceContent voice) {
         VoiceMessageHandler handler = voiceMessageHandler;
         if (voice == null || handler == null) {
-            sendReply(fromUser, contextToken, "抱歉，语音识别遇到问题，可以再试一次或直接打字告诉我～");
+            sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
             return;
         }
 
         submitReplyTask(fromUser, contextToken, () -> {
             long totalStart = System.nanoTime();
-            FutureTask<VoiceProcessingService.Result> task = new FutureTask<>(
-                    () -> handler.handle(voice, () -> client.downloadMedia(
+            FutureTask<VoiceMessageService.Result> task = new FutureTask<>(
+                    () -> handler.handle(fromUser, () -> client.downloadMedia(
                             voice.getEncryptQueryParam(), voice.getAesKey())));
             Thread.ofVirtual()
                     .name("voice-process-" + VOICE_THREAD_SEQUENCE.incrementAndGet())
                     .start(task);
             try {
-                VoiceProcessingService.Result result = task.get();
+                VoiceMessageService.Result result = task.get();
                 messages.add(new Msg(fromUser, rememberReplyTarget(fromUser, contextToken),
                         "[语音] " + result.text()));
-                displayLog(fromUser + ": [语音] " + result.text());
-                log.info("[语音处理] from={} source={} downloadMs={} convertMs={} asrMs={} totalBeforeLlmMs={}",
-                        fromUser, result.source(), result.downloadMs(), result.convertMs(), result.asrMs(),
-                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
-
-                long llmStart = System.nanoTime();
-                runAutoReply(fromUser, contextToken, result.text());
-                log.info("[语音处理] from={} llmAndReplyMs={} totalMs={}",
-                        fromUser,
-                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - llmStart),
+                displayLog(fromUser + ": [语音]");
+                if (!result.hasVoice() || !sendVoiceReply(fromUser, contextToken,
+                        result.silkAudio(), result.playtimeMs())) {
+                    sendReply(fromUser, contextToken, result.text());
+                }
+                log.info("[语音处理] from={} voiceReply={} totalMs={}", fromUser, result.hasVoice(),
                         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 log.warn("[语音处理] 任务被中断 from={}", fromUser);
-                sendReply(fromUser, contextToken, "抱歉，语音识别遇到问题，可以再试一次或直接打字告诉我～");
+                sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
             } catch (Exception e) {
                 log.error("[语音处理] 处理失败 from={} error={}", fromUser, e.getMessage(), e);
-                sendReply(fromUser, contextToken, "抱歉，语音识别遇到问题，可以再试一次或直接打字告诉我～");
+                sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
             }
         });
     }
@@ -501,6 +497,21 @@ public class BotService {
         } catch (Exception e) {
             log.error("[iLink] 图片消息发送失败 to={} error={}", toUserId, e.getMessage(), e);
             displayLog("发送图片失败: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean sendVoiceReply(String toUserId, String contextToken, byte[] silkAudio, int playtimeMs) {
+        if (!loggedIn || silkAudio == null || silkAudio.length == 0) {
+            return false;
+        }
+        try {
+            ILinkClient.MediaInfo media = client.uploadMedia(credentials.get(), 4, toUserId, silkAudio);
+            client.sendVoiceMessage(credentials.get(), toUserId, contextToken, media, playtimeMs, 1);
+            displayLog("语音回复 -> " + toUserId + " (" + playtimeMs + " ms)");
+            return true;
+        } catch (Exception e) {
+            log.error("[iLink] 语音消息发送失败 to={} error={}", toUserId, e.getMessage(), e);
             return false;
         }
     }

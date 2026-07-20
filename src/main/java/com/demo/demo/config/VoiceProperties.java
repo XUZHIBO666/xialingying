@@ -10,6 +10,7 @@ import java.time.Duration;
 public class VoiceProperties {
 
     private final Asr asr = new Asr();
+    private final Tts tts = new Tts();
     private final Audio audio = new Audio();
 
     public Asr getAsr() {
@@ -18,6 +19,10 @@ public class VoiceProperties {
 
     public Audio getAudio() {
         return audio;
+    }
+
+    public Tts getTts() {
+        return tts;
     }
 
     public static class Asr {
@@ -59,9 +64,28 @@ public class VoiceProperties {
         }
     }
 
+    public static class Tts {
+        private String apiKey = "";
+        private String apiUrl = "https://api.siliconflow.cn";
+        private String model = "FunAudioLLM/CosyVoice2-0.5B";
+        private String voice = "FunAudioLLM/CosyVoice2-0.5B:anna";
+        private Duration timeout = Duration.ofSeconds(60);
+
+        public String getApiKey() { return apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+        public String getApiUrl() { return apiUrl; }
+        public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }
+        public String getModel() { return model; }
+        public void setModel(String model) { this.model = model; }
+        public String getVoice() { return voice; }
+        public void setVoice(String voice) { this.voice = voice; }
+        public Duration getTimeout() { return timeout; }
+        public void setTimeout(Duration timeout) { this.timeout = timeout; }
+    }
+
     public static class Audio {
         private String silkDecoderPath = "";
-        private String ffmpegPath = "ffmpeg";
+        private String silkEncoderPath = "";
         private Duration processTimeout = Duration.ofSeconds(30);
 
         public String getSilkDecoderPath() {
@@ -72,12 +96,12 @@ public class VoiceProperties {
             this.silkDecoderPath = silkDecoderPath;
         }
 
-        public String getFfmpegPath() {
-            return ffmpegPath;
+        public String getSilkEncoderPath() {
+            return silkEncoderPath;
         }
 
-        public void setFfmpegPath(String ffmpegPath) {
-            this.ffmpegPath = ffmpegPath;
+        public void setSilkEncoderPath(String silkEncoderPath) {
+            this.silkEncoderPath = silkEncoderPath;
         }
 
         public Duration getProcessTimeout() {

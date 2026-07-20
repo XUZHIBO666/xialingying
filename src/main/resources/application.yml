@@ -40,7 +40,13 @@ ai:
       api-url: ${VOICE_ASR_API_URL:https://api.siliconflow.cn}
       model: ${VOICE_ASR_MODEL:FunAudioLLM/SenseVoiceSmall}
       timeout: ${VOICE_ASR_TIMEOUT:60s}
+    tts:
+      api-key: ${VOICE_TTS_API_KEY:${VOICE_ASR_API_KEY:}}
+      api-url: ${VOICE_TTS_API_URL:https://api.siliconflow.cn}
+      model: ${VOICE_TTS_MODEL:FunAudioLLM/CosyVoice2-0.5B}
+      voice: ${VOICE_TTS_VOICE:FunAudioLLM/CosyVoice2-0.5B:anna}
+      timeout: ${VOICE_TTS_TIMEOUT:60s}
     audio:
       silk-decoder-path: ${VOICE_SILK_DECODER_PATH:}
-      ffmpeg-path: ${VOICE_FFMPEG_PATH:ffmpeg}
+      silk-encoder-path: ${VOICE_SILK_ENCODER_PATH:}
       process-timeout: ${VOICE_AUDIO_PROCESS_TIMEOUT:30s}

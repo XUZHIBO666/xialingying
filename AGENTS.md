@@ -10,7 +10,7 @@
 
 - `mvnw.cmd spring-boot:run` — start the application locally.
 - `mvnw.cmd test` — run the complete JUnit suite.
-- `mvnw.cmd -Dtest=VoiceProcessingServiceTest test` — run one focused test class.
+- `mvnw.cmd -Dtest=VoiceMessageServiceTest test` — run one focused test class.
 - `mvnw.cmd clean package` — compile, test, and build the JAR.
 
 Use `./mvnw` instead on macOS or Linux.

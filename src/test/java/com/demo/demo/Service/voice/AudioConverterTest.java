@@ -17,29 +17,53 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class AudioConverterTest {
 
     @Test
-    void convertsWechatSilkTo16kMonoWav() throws Exception {
+    void convertsWechatSilkTo16kMonoPcm() throws Exception {
         VoiceProperties properties = properties();
         List<List<String>> commands = new ArrayList<>();
-        byte[] expectedWav = "RIFF-test-WAVE".getBytes(StandardCharsets.US_ASCII);
+        byte[] expectedPcm = new byte[]{1, 0, 2, 0};
         AudioConverter converter = new AudioConverter(properties, (command, timeout) -> {
             commands.add(command);
-            if (command.get(0).equals("decoder.exe")) {
-                Files.write(Path.of(command.get(2)), new byte[]{1, 2, 3, 4});
-            } else {
-                Files.write(Path.of(command.get(command.size() - 1)), expectedWav);
-            }
+            Files.write(Path.of(command.get(2)), expectedPcm);
         });
 
         byte[] silk = concat(new byte[]{0x02}, "#!SILK_V3payload".getBytes(StandardCharsets.US_ASCII));
-        byte[] actual = converter.convertToWav(silk);
+        byte[] actual = converter.silkToPcm(silk);
 
-        assertArrayEquals(expectedWav, actual);
+        assertArrayEquals(expectedPcm, actual);
+        assertEquals(1, commands.size());
         assertEquals("decoder.exe", commands.get(0).get(0));
         assertEquals("-Fs_API", commands.get(0).get(3));
         assertEquals("16000", commands.get(0).get(4));
-        assertEquals("ffmpeg.exe", commands.get(1).get(0));
-        assertEquals("16000", commands.get(1).get(5));
-        assertEquals("1", commands.get(1).get(7));
+    }
+
+    @Test
+    void converts16kMonoPcmToWechatSilk() throws Exception {
+        VoiceProperties properties = properties();
+        List<String> command = new ArrayList<>();
+        byte[] expectedSilk = concat(new byte[]{0x02},
+                "#!SILK_V3payload".getBytes(StandardCharsets.US_ASCII));
+        AudioConverter converter = new AudioConverter(properties, (actualCommand, timeout) -> {
+            command.addAll(actualCommand);
+            Files.write(Path.of(actualCommand.get(2)), expectedSilk);
+        });
+
+        byte[] actual = converter.pcmToSilk(new byte[]{1, 0, 2, 0});
+
+        assertArrayEquals(expectedSilk, actual);
+        assertEquals("encoder.exe", command.get(0));
+        assertEquals("-Fs_API", command.get(3));
+        assertEquals("16000", command.get(4));
+        assertEquals("-tencent", command.get(command.size() - 1));
+    }
+
+    @Test
+    void rejectsEncoderOutputWithoutTencentPrefix() {
+        VoiceProperties properties = properties();
+        AudioConverter converter = new AudioConverter(properties, (command, timeout) ->
+                Files.write(Path.of(command.get(2)),
+                        "#!SILK_V3payload".getBytes(StandardCharsets.US_ASCII)));
+
+        assertThrows(IOException.class, () -> converter.pcmToSilk(new byte[]{1, 0, 2, 0}));
     }
 
     @Test
@@ -49,13 +73,13 @@ class AudioConverterTest {
             throw new AssertionError("command must not run");
         });
 
-        assertThrows(IOException.class, () -> converter.convertToWav(new byte[]{1, 2, 3}));
+        assertThrows(IOException.class, () -> converter.silkToPcm(new byte[]{1, 2, 3}));
     }
 
     private VoiceProperties properties() {
         VoiceProperties properties = new VoiceProperties();
         properties.getAudio().setSilkDecoderPath("decoder.exe");
-        properties.getAudio().setFfmpegPath("ffmpeg.exe");
+        properties.getAudio().setSilkEncoderPath("encoder.exe");
         return properties;
     }
 

@@ -25,7 +25,7 @@ class VoiceFallbackReplyTest {
         ReflectionTestUtils.invokeMethod(botService, "processVoiceMessage", "wx-user", "ctx-token", voice);
 
         verify(client, timeout(1000)).sendTextMessage(any(LoginCredentials.class), eq("wx-user"),
-                eq("ctx-token"), eq("抱歉，语音识别遇到问题，可以再试一次或直接打字告诉我～"));
+                eq("ctx-token"), eq("没有听清，请重新发送一段语音。"));
     }
 
     @SuppressWarnings("unchecked")

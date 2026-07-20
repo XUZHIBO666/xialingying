@@ -13,6 +13,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 
 @Service
 public class SiliconFlowAsrService implements AsrService {
@@ -43,13 +46,15 @@ public class SiliconFlowAsrService implements AsrService {
     }
 
     @Override
-    public String transcribe(byte[] wavAudio) throws IOException {
+    public String transcribe(byte[] pcmAudio) throws IOException {
         if (!isConfigured()) {
             throw new IOException("ASR 未配置");
         }
-        if (wavAudio == null || wavAudio.length == 0 || wavAudio.length > MAX_AUDIO_BYTES) {
+        if (pcmAudio == null || pcmAudio.length == 0 || pcmAudio.length > MAX_AUDIO_BYTES
+                || pcmAudio.length % 2 != 0) {
             throw new IOException("ASR 音频大小无效");
         }
+        byte[] wavAudio = wrapPcmAsWav(pcmAudio);
 
         RequestBody body = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
@@ -81,5 +86,23 @@ public class SiliconFlowAsrService implements AsrService {
 
     private String trimTrailingSlash(String value) {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    private byte[] wrapPcmAsWav(byte[] pcm) {
+        ByteBuffer wav = ByteBuffer.allocate(44 + pcm.length).order(ByteOrder.LITTLE_ENDIAN);
+        wav.put("RIFF".getBytes(StandardCharsets.US_ASCII));
+        wav.putInt(36 + pcm.length);
+        wav.put("WAVEfmt ".getBytes(StandardCharsets.US_ASCII));
+        wav.putInt(16);
+        wav.putShort((short) 1);
+        wav.putShort((short) 1);
+        wav.putInt(16000);
+        wav.putInt(16000 * 2);
+        wav.putShort((short) 2);
+        wav.putShort((short) 16);
+        wav.put("data".getBytes(StandardCharsets.US_ASCII));
+        wav.putInt(pcm.length);
+        wav.put(pcm);
+        return wav.array();
     }
 }

@@ -23,9 +23,15 @@ ai:
       api-url: https://api.siliconflow.cn
       model: FunAudioLLM/SenseVoiceSmall
       timeout: 60s
+    tts:
+      api-key: your-siliconflow-api-key-here
+      api-url: https://api.siliconflow.cn
+      model: FunAudioLLM/CosyVoice2-0.5B
+      voice: FunAudioLLM/CosyVoice2-0.5B:anna
+      timeout: 60s
     audio:
       silk-decoder-path: E:/path/to/silk/decoder.exe
-      ffmpeg-path: E:/path/to/ffmpeg.exe
+      silk-encoder-path: E:/path/to/silk/silk_v3_encoder.exe
       process-timeout: 30s
 
 

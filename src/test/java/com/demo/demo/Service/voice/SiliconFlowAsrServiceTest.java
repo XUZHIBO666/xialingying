@@ -41,13 +41,16 @@ class SiliconFlowAsrServiceTest {
         properties.getAsr().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
         SiliconFlowAsrService service = new SiliconFlowAsrService(properties, new OkHttpClient());
 
-        String result = service.transcribe("RIFF-test-WAVE".getBytes(StandardCharsets.US_ASCII));
+        byte[] pcm = new byte[]{1, 0, 2, 0};
+        String result = service.transcribe(pcm);
 
         assertEquals("你好，世界", result);
         assertEquals("Bearer test-key", authorization.get());
         assertTrue(requestBody.get().contains("FunAudioLLM/SenseVoiceSmall"));
         assertTrue(requestBody.get().contains("voice.wav"));
-        assertTrue(requestBody.get().contains("RIFF-test-WAVE"));
+        assertTrue(requestBody.get().contains("RIFF"));
+        assertTrue(requestBody.get().contains("WAVEfmt "));
+        assertTrue(requestBody.get().contains("data"));
     }
 
     private void send(HttpExchange exchange, int code, String body) throws IOException {
