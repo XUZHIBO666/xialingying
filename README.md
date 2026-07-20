@@ -63,6 +63,21 @@ VOICE_AUDIO_PROCESS_TIMEOUT=30s
 
 本地解码器需兼容 [silk-v3-decoder](https://github.com/kn007/silk-v3-decoder) 的命令行参数。构建该项目的 `decoder`，并把绝对路径配置到 `VOICE_SILK_DECODER_PATH`。入站音频在服务内部转换为 PCM S16LE、16000 Hz、单声道；出站 MP3 由 SiliconFlow 直接生成，不需要 FFmpeg 或本地 SILK encoder。
 
+### 对话记忆持久化
+
+每个微信用户的最近 10 轮完整 LLM 对话会自动持久化到本地 JSON 文件，应用重启后自动恢复上下文。
+
+```bash
+AI_MEMORY_FILE=./data/conversation-memory.json   # 默认值，可自定义路径
+```
+
+**运维说明**：
+- 文件路径相对于 JVM 工作目录
+- 删除该文件即可清除所有用户的对话记忆
+- `data/` 目录已在 `.gitignore` 中，不会被提交
+- 每 100 个活跃用户约占用 1 MB 磁盘空间
+- 不支持多实例共享同一文件
+
 ## 运行
 
 ```bash
