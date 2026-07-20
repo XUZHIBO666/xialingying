@@ -27,7 +27,8 @@ public class BotAdminAuthConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new BotAdminTokenInterceptor(() -> environment.getProperty(ADMIN_TOKEN_ENV)))
-                .addPathPatterns("/bot", "/bot/**");
+                .addPathPatterns("/bot", "/bot/**")
+                .excludePathPatterns("/bot/health/live", "/bot/health/ready");
     }
 
     static class BotAdminTokenInterceptor implements HandlerInterceptor {
