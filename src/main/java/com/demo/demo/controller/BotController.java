@@ -114,8 +114,9 @@ public class BotController {
                 if (reply != null) return reply;
             }
 
-            // -- 普通对话，直接丢给 AI --
-            String aiReply = aiService.chat(fromUser, text);
+            // -- 普通对话 + Function Calling（兜底） --
+            // 使用 chatWithTools 让 LLM 自行决定是否调用工具（天气/时间等）
+            String aiReply = aiService.chatWithTools(fromUser, text);
             if (aiReply != null) return aiReply;
 
             return "（AI 暂时无响应，请稍后再试）";

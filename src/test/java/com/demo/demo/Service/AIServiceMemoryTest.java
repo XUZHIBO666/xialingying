@@ -3,6 +3,7 @@ package com.demo.demo.Service;
 import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.memory.ConversationMemoryStore;
 import com.demo.demo.Service.memory.ConversationMessage;
+import com.demo.demo.Service.tool.ToolRegistry;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -82,7 +83,8 @@ class AIServiceMemoryTest {
     }
 
     private AIService createAiService(ConversationMemoryStore store) {
-        AIService service = new AIService(store, new ContextManager());
+        ToolRegistry emptyTools = new ToolRegistry(java.util.List.of());
+        AIService service = new AIService(store, new ContextManager(), emptyTools);
         ReflectionTestUtils.setField(service, "apiKey", "test-key");
         ReflectionTestUtils.setField(service, "apiUrl", "http://localhost:" + serverPort);
         ReflectionTestUtils.setField(service, "model", "test-model");
@@ -314,5 +316,50 @@ class AIServiceMemoryTest {
         ConversationMemoryStore store3 = new ConversationMemoryStore(memFile);
         assertEquals(savedSize, store3.getHistory("user-a").size(),
                 "空回复不应持久化");
+    }
+
+    // === 7. Function Calling 无工具时行为一致 ===
+
+    @Test
+    void functionCallingWithoutToolsBehavesLikeChat() throws IOException {
+        Path memFile = tempDir.resolve("memory.json");
+        nextResponse.set("""
+                {"choices":[{"message":{"content":"普通回复"}}]}""");
+
+        ConversationMemoryStore store = new ConversationMemoryStore(memFile);
+        AIService service = createAiService(store);
+
+        String reply = service.chatWithTools("user-a", "你好");
+        assertEquals("普通回复", reply);
+
+        // 验证历史已持久化
+        ConversationMemoryStore reloaded = new ConversationMemoryStore(memFile);
+        assertEquals(2, reloaded.getHistory("user-a").size());
+    }
+
+    // === 8. Function Calling + 工具：LLM 选择不用工具时行为正常 ===
+
+    @Test
+    void functionCallingWithToolsButLlmChoosesNotToUse() throws IOException {
+        Path memFile = tempDir.resolve("memory.json");
+
+        // LLM 决定不调用工具，直接返回文本
+        nextResponse.set("""
+                {"choices":[{"message":{"content":"现在应该是下午三点左右。"}}]}""");
+
+        ConversationMemoryStore store = new ConversationMemoryStore(memFile);
+        AIService service = createAiService(store);
+        // 注入有时间工具的 ToolRegistry
+        com.demo.demo.Service.tool.ToolRegistry realRegistry =
+                new com.demo.demo.Service.tool.ToolRegistry(
+                        java.util.List.of(new com.demo.demo.Service.tool.TimeTool()));
+        ReflectionTestUtils.setField(service, "toolRegistry", realRegistry);
+
+        String reply = service.chatWithTools("user-a", "现在几点");
+        assertEquals("现在应该是下午三点左右。", reply);
+
+        // 历史应持久化
+        ConversationMemoryStore reloaded = new ConversationMemoryStore(memFile);
+        assertEquals(2, reloaded.getHistory("user-a").size());
     }
 }
