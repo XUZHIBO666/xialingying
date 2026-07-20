@@ -136,8 +136,8 @@ public class ImageRecognitionService {
         try (Response response = executeRecognitionRequest(request)) {
             String json = response.body() == null ? "" : response.body().string();
             if (!response.isSuccessful()) {
-                log.error("[图片识别] API 调用失败 HTTP {} body={}", response.code(),
-                        json.length() > 300 ? json.substring(0, 300) : json);
+                log.error("[图片识别] API 调用失败 HTTP {} responseLength={}",
+                        response.code(), json == null ? 0 : json.length());
                 throw new IOException("图片识别失败，HTTP " + response.code() + "：" + extractErrorMessage(json));
             }
             String reply = JsonParser.parseString(json).getAsJsonObject()

@@ -223,7 +223,7 @@ public class BotService {
                 String imgData = qr.getQrcode_img_content();
 
                 qrCodeUrl.set(content);
-                log.info("[iLink] 二维码已获取: {}", content);
+                log.info("[iLink] 二维码已获取，长度 {}", content == null ? 0 : content.length());
 
                 // 2. 处理二维码图片
                 String qrBase64 = buildQrCodeBase64(content, imgData);
@@ -254,7 +254,7 @@ public class BotService {
                         credentials.set(ILinkClient.createCredentials(content, s));
                         loggedIn = true;
                         statusText.set("已登录 " + credentials.get().getUserId());
-                        log.info("[iLink] 登录成功！Bot ID: {}", credentials.get().getUserId());
+                        log.info("[iLink] 登录成功！Bot ID: {}", maskUserId(credentials.get().getUserId()));
                         displayLog("登录成功！Bot ID: " + credentials.get().getUserId());
                         startListening();
                         return;
@@ -303,7 +303,7 @@ public class BotService {
                     String nextCursor = result.getNextCursor();
                     if (nextCursor != null && !nextCursor.isEmpty()) {
                         cursor = nextCursor;
-                        log.debug("[iLink] 更新游标: {}", cursor);
+                        log.debug("[iLink] 更新游标");
                     }
 
                     for (WeixinMessageDto dto : result.getMessages()) {
@@ -322,21 +322,22 @@ public class BotService {
 
                             if (item.isText()) {
                                 String text = item.getText();
-                                log.info("[iLink] 收到消息 from={} contextToken={} text={}",
-                                        fromUser, maskToken(contextToken), text);
+                                log.info("[iLink] 收到文本消息 from={} contextToken={} textLength={}",
+                        maskUserId(fromUser), maskToken(contextToken),
+                        text == null ? 0 : text.length());
                                 processTextMessage(fromUser, contextToken, text);
                                 continue;
                             }
 
                             if (item.isImage()) {
                                 log.info("[iLink] 收到图片 from={} contextToken={}",
-                                        fromUser, maskToken(contextToken));
+                        maskUserId(fromUser), maskToken(contextToken));
                                 processImageItem(fromUser, contextToken, item.getImage());
                                 continue;
                             }
 
                             if (item.isVoice()) {
-                                log.info("[iLink] 收到语音消息 from={}", fromUser);
+                                log.info("[iLink] 收到语音消息 from={}", maskUserId(fromUser));
                                 processVoiceMessage(fromUser, contextToken, item.getVoice());
                             }
                         }
@@ -401,15 +402,14 @@ public class BotService {
         // 提交到回复线程池异步下载和识别，避免 CDN 下载阻塞消息监听线程。
         submitReplyTask(fromUser, contextToken, () -> {
             try {
-                log.info("[iLink] 下载图片 param={} aesKeyPresent={}",
-                        downloadParam == null ? "null"
-                                : downloadParam.substring(0,
-                                        Math.min(downloadParam.length(), 24)) + "...",
+                log.info("[iLink] 下载图片 paramLength={} aesKeyPresent={}",
+                        downloadParam == null ? 0 : downloadParam.length(),
                         aesKey != null && !aesKey.isBlank());
                 byte[] imageBytes = client.downloadMedia(downloadParam, aesKey);
                 processImageMessage(fromUser, contextToken, imageBytes);
             } catch (Exception e) {
-                log.error("[iLink] 图片下载失败 from={} error={}", fromUser, e.getMessage(), e);
+                log.error("[iLink] 图片下载失败 from={} error={}",
+                        maskUserId(fromUser), e.getMessage(), e);
                 displayLog("图片下载失败: " + e.getMessage());
                 sendReply(fromUser, contextToken, "收到图片了，但图片下载失败，暂时无法识别。");
             }
@@ -441,14 +441,14 @@ public class BotService {
                 if (!mp3ReplySent) {
                     sendReply(fromUser, contextToken, result.text());
                 }
-                log.info("[语音处理] from={} mp3Reply={} totalMs={}", fromUser, mp3ReplySent,
+                log.info("[语音处理] from={} mp3Reply={} totalMs={}", maskUserId(fromUser), mp3ReplySent,
                         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                log.warn("[语音处理] 任务被中断 from={}", fromUser);
+                log.warn("[语音处理] 任务被中断 from={}", maskUserId(fromUser));
                 sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
             } catch (Exception e) {
-                log.error("[语音处理] 处理失败 from={} error={}", fromUser, e.getMessage(), e);
+                log.error("[语音处理] 处理失败 from={} error={}", maskUserId(fromUser), e.getMessage(), e);
                 sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
             }
         });
@@ -523,13 +523,15 @@ public class BotService {
             return;
         }
         try {
-            log.info("[iLink] 发送文本消息 to={} contextToken={} text={}",
-                    toUserId, maskToken(contextToken), text);
+            log.info("[iLink] 发送文本消息 to={} contextToken={} textLength={}",
+                    maskUserId(toUserId), maskToken(contextToken),
+                    text == null ? 0 : text.length());
             client.sendTextMessage(credentials.get(), toUserId, contextToken, text);
-            log.info("[iLink] 文本消息发送成功 to={}", toUserId);
+            log.info("[iLink] 文本消息发送成功 to={}", maskUserId(toUserId));
             displayLog("回复 -> " + toUserId + ": " + text);
         } catch (Exception e) {
-            log.error("[iLink] 文本消息发送失败 to={} error={}", toUserId, e.getMessage(), e);
+            log.error("[iLink] 文本消息发送失败 to={} error={}",
+                        maskUserId(toUserId), e.getMessage(), e);
             displayLog("发送失败: " + e.getMessage());
         }
     }
@@ -558,14 +560,16 @@ public class BotService {
             return false;
         }
         try {
-            log.info("[iLink] 上传图片 to={} size={} bytes", toUserId, imageBytes.length);
+            log.info("[iLink] 上传图片 to={} size={} bytes",
+                        maskUserId(toUserId), imageBytes.length);
             ILinkClient.MediaInfo media = client.uploadMedia(credentials.get(), 1, toUserId, imageBytes);
             client.sendImageMessage(credentials.get(), toUserId, contextToken, media);
-            log.info("[iLink] 图片消息发送成功 to={}", toUserId);
+            log.info("[iLink] 图片消息发送成功 to={}", maskUserId(toUserId));
             displayLog("图片回复 -> " + toUserId + " (" + imageBytes.length + " bytes)");
             return true;
         } catch (Exception e) {
-            log.error("[iLink] 图片消息发送失败 to={} error={}", toUserId, e.getMessage(), e);
+            log.error("[iLink] 图片消息发送失败 to={} error={}",
+                    maskUserId(toUserId), e.getMessage(), e);
             displayLog("发送图片失败: " + e.getMessage());
             return false;
         }
@@ -580,12 +584,13 @@ public class BotService {
             String fileName = "voice-reply-" + System.currentTimeMillis() + ".mp3";
             client.sendFileMessage(credentials.get(), toUserId, contextToken, media,
                     fileName, mp3Audio.length);
-            log.info("[iLink] MP3 文件发送成功 to={} mp3Bytes={} fileName={}",
-                    toUserId, mp3Audio.length, fileName);
+            log.info("[iLink] MP3 文件发送成功 to={} mp3Bytes={}",
+                    maskUserId(toUserId), mp3Audio.length);
             displayLog("MP3 回复 -> " + toUserId + " (" + mp3Audio.length + " bytes)");
             return true;
         } catch (Exception e) {
-            log.error("[iLink] MP3 文件发送失败 to={} error={}", toUserId, e.getMessage(), e);
+            log.error("[iLink] MP3 文件发送失败 to={} error={}",
+                    maskUserId(toUserId), e.getMessage(), e);
             return false;
         }
     }
