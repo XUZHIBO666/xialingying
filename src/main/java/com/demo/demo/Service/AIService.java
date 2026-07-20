@@ -1,26 +1,25 @@
 package com.demo.demo.Service;
 
+import com.demo.demo.Service.memory.ConversationMemoryStore;
+import com.demo.demo.Service.memory.ConversationMessage;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.*;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.Map;
+import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 
-/**
- * AI 大模型服务：调用 LLM API 生成智能回复
- * 支持 DeepSeek、OpenAI 及所有兼容 /v1/chat/completions 的 API
- *
- * 配置方式（application.yml）：
- *   ai.api.key: 你的API_KEY
- *   ai.api.url: https://api.deepseek.com
- *   ai.model: deepseek-chat
- */
+/** 调用兼容 OpenAI Chat Completions 接口的 LLM 服务。 */
 @Slf4j
 @Service
 public class AIService {
@@ -37,54 +36,36 @@ public class AIService {
     @Value("${ai.system-prompt}")
     private String systemPrompt;
 
+    private final ConversationMemoryStore memoryStore;
+    private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
     private final OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .build();
 
-    // 简单记忆：每个用户保留最近 10 轮对话
-    private final Map<String, JsonArray> historyMap = new ConcurrentHashMap<>();
-    private static final int MAX_HISTORY = 10;
+    public AIService(ConversationMemoryStore memoryStore) {
+        this.memoryStore = memoryStore;
+    }
 
-    /**
-     * 调用 AI 生成回复
-     *
-     * @param userId  用户 ID（用于区分不同人的对话上下文）
-     * @param message 用户发的消息
-     * @return AI 回复文本，失败返回 null
-     */
+    /** 调用 AI 生成回复，失败时返回 null。 */
     public String chat(String userId, String message) {
-        if (apiKey == null || apiKey.isEmpty() || "你的API_KEY".equals(apiKey)) {
+        if (!isConfigured()) {
             log.debug("[AI] API Key 未配置，跳过调用");
             return null;
         }
 
-        log.info("[AI] 收到对话请求 userId={} message={}", userId,
-                message.length() > 100 ? message.substring(0, 100) + "..." : message);
+        Object lock = userLocks.computeIfAbsent(userId, ignored -> new Object());
+        synchronized (lock) {
+            return chatInOrder(userId, message);
+        }
+    }
+
+    private String chatInOrder(String userId, String message) {
+        log.info("[AI] 收到对话请求 userId={} messageLength={}",
+                maskUserId(userId), message == null ? 0 : message.length());
 
         try {
-            // 构建消息列表
-            JsonArray messages = historyMap.computeIfAbsent(userId, k -> new JsonArray());
-
-            if (messages.isEmpty()) {
-                JsonObject sys = new JsonObject();
-                sys.addProperty("role", "system");
-                sys.addProperty("content", systemPrompt);
-                messages.add(sys);
-                log.debug("[AI] 为用户 {} 初始化系统提示", userId);
-            }
-
-            JsonObject userMsg = new JsonObject();
-            userMsg.addProperty("role", "user");
-            userMsg.addProperty("content", message);
-            messages.add(userMsg);
-
-            // 限制历史长度
-            while (messages.size() > MAX_HISTORY + 1) {
-                messages.remove(1);
-            }
-
-            // 构建请求体
+            JsonArray messages = buildMessages(userId, message);
             JsonObject body = new JsonObject();
             body.addProperty("model", model);
             body.add("messages", messages);
@@ -92,7 +73,6 @@ public class AIService {
             body.addProperty("temperature", 0.7);
 
             log.debug("[AI] 请求参数 model={} historySize={}", model, messages.size());
-
             Request request = new Request.Builder()
                     .url(apiUrl + "/v1/chat/completions")
                     .header("Authorization", "Bearer " + apiKey)
@@ -104,45 +84,78 @@ public class AIService {
             try (Response response = client.newCall(request).execute()) {
                 String json = response.body() != null ? response.body().string() : "";
                 if (!response.isSuccessful()) {
-                    log.error("[AI] API 调用失败 HTTP {} body={}", response.code(),
-                            json.length() > 200 ? json.substring(0, 200) : json);
-                    if (messages.size() > 0) messages.remove(messages.size() - 1);
+                    log.error("[AI] API 调用失败 userId={} httpStatus={}",
+                            maskUserId(userId), response.code());
                     return null;
                 }
 
-                JsonObject result = JsonParser.parseString(json).getAsJsonObject();
-                String reply = result.getAsJsonArray("choices")
+                String reply = JsonParser.parseString(json).getAsJsonObject()
+                        .getAsJsonArray("choices")
                         .get(0).getAsJsonObject()
                         .getAsJsonObject("message")
-                        .get("content").getAsString();
+                        .get("content").getAsString().trim();
+                try {
+                    memoryStore.appendTurn(userId, message, reply);
+                } catch (IOException e) {
+                    log.error("[AI] 记忆保存失败 userId={} error={}",
+                            maskUserId(userId), e.getMessage());
+                }
 
-                // 记录 AI 回复到历史
-                JsonObject aiMsg = new JsonObject();
-                aiMsg.addProperty("role", "assistant");
-                aiMsg.addProperty("content", reply);
-                messages.add(aiMsg);
-
-                log.info("[AI] 回复成功 userId={} reply={}",
-                        userId,
-                        reply.length() > 100 ? reply.substring(0, 100) + "..." : reply);
-
-                return reply.trim();
+                log.info("[AI] 回复成功 userId={} replyLength={}",
+                        maskUserId(userId), reply.length());
+                return reply;
             }
         } catch (Exception e) {
-            log.error("[AI] 调用异常 userId={} error={}", userId, e.getMessage(), e);
+            log.error("[AI] 调用异常 userId={} type={} error={}",
+                    maskUserId(userId), e.getClass().getSimpleName(), e.getMessage());
             return null;
         }
     }
 
-    /** 清除指定用户的对话历史 */
-    public void clearHistory(String userId) {
-        log.info("[AI] 清除对话历史 userId={}", userId);
-        historyMap.remove(userId);
+    private JsonArray buildMessages(String userId, String currentMessage) {
+        JsonArray messages = new JsonArray();
+        JsonObject system = new JsonObject();
+        system.addProperty("role", "system");
+        system.addProperty("content", systemPrompt);
+        messages.add(system);
+
+        for (ConversationMessage saved : memoryStore.getHistory(userId)) {
+            JsonObject historyMessage = new JsonObject();
+            historyMessage.addProperty("role", saved.role());
+            historyMessage.addProperty("content", saved.content());
+            messages.add(historyMessage);
+        }
+
+        JsonObject current = new JsonObject();
+        current.addProperty("role", "user");
+        current.addProperty("content", currentMessage);
+        messages.add(current);
+        return messages;
     }
 
-    /** 是否已配置 API Key */
+    /** 清除指定用户的持久化对话历史。 */
+    public void clearHistory(String userId) {
+        Object lock = userLocks.computeIfAbsent(userId, ignored -> new Object());
+        synchronized (lock) {
+            try {
+                memoryStore.clear(userId);
+                log.info("[AI] 清除对话历史 userId={}", maskUserId(userId));
+            } catch (IOException e) {
+                log.error("[AI] 清除对话历史失败 userId={} error={}",
+                        maskUserId(userId), e.getMessage());
+            }
+        }
+    }
+
+    /** 是否已经配置 API Key。 */
     public boolean isConfigured() {
-        return apiKey != null && !apiKey.isEmpty()
-                && !"你的API_KEY".equals(apiKey);
+        return apiKey != null && !apiKey.isEmpty() && !"你的API_KEY".equals(apiKey);
+    }
+
+    private String maskUserId(String userId) {
+        if (userId == null || userId.length() < 9) {
+            return "***";
+        }
+        return userId.substring(0, 4) + "..." + userId.substring(userId.length() - 4);
     }
 }
