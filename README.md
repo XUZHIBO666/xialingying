@@ -32,9 +32,9 @@
 
 ```bash
 AI_API_KEY=你的聊天模型密钥
-IMAGE_API_KEY=你的图片生成密钥
-IMAGE_API_URL=https://api.openai.com
-IMAGE_MODEL=gpt-image-1
+IMAGE_API_KEY=你的图片生成密钥（与 SiliconFlow 其他 Key 可共用）
+IMAGE_API_URL=https://api.siliconflow.cn
+IMAGE_MODEL=Kwai-Kolors/Kolors
 IMAGE_SIZE=1024x1024
 VISION_API_KEY=你的视觉模型密钥
 VISION_API_URL=https://api.siliconflow.cn

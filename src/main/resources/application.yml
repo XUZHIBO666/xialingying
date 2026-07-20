@@ -27,8 +27,8 @@ ai:
   image:
     api:
       key: ${IMAGE_API_KEY:}
-      url: ${IMAGE_API_URL:https://api.openai.com}
-    model: ${IMAGE_MODEL:gpt-image-1}
+      url: ${IMAGE_API_URL:https://api.siliconflow.cn}
+    model: ${IMAGE_MODEL:Kwai-Kolors/Kolors}
     size: ${IMAGE_SIZE:1024x1024}
   vision:
     api:

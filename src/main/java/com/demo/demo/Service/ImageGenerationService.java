@@ -54,8 +54,8 @@ public class ImageGenerationService {
     @Autowired
     public ImageGenerationService(
             @Value("${ai.image.api.key:}") String apiKey,
-            @Value("${ai.image.api.url:https://api.openai.com}") String apiUrl,
-            @Value("${ai.image.model:gpt-image-1}") String model,
+            @Value("${ai.image.api.url:https://api.siliconflow.cn}") String apiUrl,
+            @Value("${ai.image.model:Kwai-Kolors/Kolors}") String model,
             @Value("${ai.image.size:1024x1024}") String size) {
         this(apiKey, apiUrl, model, size, new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
@@ -148,6 +148,13 @@ public class ImageGenerationService {
                         + (errMsg.isEmpty() ? "" : "：" + errMsg));
             }
             return readImageBytes(body);
+        } catch (java.net.ConnectException e) {
+            throw new IOException("无法连接图片生成服务（" + apiUrl + "），请检查 IMAGE_API_URL 配置和网络");
+        } catch (java.net.SocketTimeoutException e) {
+            throw new IOException("图片生成服务响应超时，请稍后重试");
+        } catch (IOException e) {
+            // 重新抛出（不包装已包装过的异常）
+            throw e;
         }
     }
 
