@@ -1,6 +1,7 @@
 package com.demo.demo.Service.voice;
 
 import com.demo.demo.Service.AIService;
+import com.demo.demo.Service.context.ContextManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -15,13 +16,16 @@ public class VoiceMessageService {
     private final AsrService asrService;
     private final AIService aiService;
     private final TtsService ttsService;
+    private final ContextManager contextManager;
 
     public VoiceMessageService(AudioCodecService audioCodecService, AsrService asrService,
-                               AIService aiService, TtsService ttsService) {
+                               AIService aiService, TtsService ttsService,
+                               ContextManager contextManager) {
         this.audioCodecService = audioCodecService;
         this.asrService = asrService;
         this.aiService = aiService;
         this.ttsService = ttsService;
+        this.contextManager = contextManager;
     }
 
     public Result process(String userId, byte[] silkAudio) {
@@ -33,6 +37,7 @@ public class VoiceMessageService {
                 return Result.textOnly(ASR_FAILURE_TEXT);
             }
             recognizedText = recognizedText.trim();
+            contextManager.recordVoice(userId, recognizedText);
         } catch (Exception e) {
             log.warn("[语音处理] ASR 阶段失败: {}", e.getMessage());
             return Result.textOnly(ASR_FAILURE_TEXT);

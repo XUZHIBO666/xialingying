@@ -1,5 +1,6 @@
 package com.demo.demo.Service;
 
+import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.controller.BotController;
 import com.lth.wechat.ilink.ILinkClient;
 import com.lth.wechat.ilink.LoginCredentials;
@@ -222,6 +223,7 @@ class ImageAutoReplyTest {
         ReflectionTestUtils.setField(controller, "aiService", aiService);
         ReflectionTestUtils.setField(controller, "imageGenerationService", imageService);
         ReflectionTestUtils.setField(controller, "imageRecognitionService", recognitionService);
+        ReflectionTestUtils.setField(controller, "contextManager", new ContextManager());
         return controller;
     }
 }

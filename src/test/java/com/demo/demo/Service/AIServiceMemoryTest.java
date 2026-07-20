@@ -1,5 +1,6 @@
 package com.demo.demo.Service;
 
+import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.memory.ConversationMemoryStore;
 import com.demo.demo.Service.memory.ConversationMessage;
 import com.google.gson.JsonArray;
@@ -81,7 +82,7 @@ class AIServiceMemoryTest {
     }
 
     private AIService createAiService(ConversationMemoryStore store) {
-        AIService service = new AIService(store);
+        AIService service = new AIService(store, new ContextManager());
         ReflectionTestUtils.setField(service, "apiKey", "test-key");
         ReflectionTestUtils.setField(service, "apiUrl", "http://localhost:" + serverPort);
         ReflectionTestUtils.setField(service, "model", "test-model");

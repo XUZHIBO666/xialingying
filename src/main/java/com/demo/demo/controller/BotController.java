@@ -4,6 +4,7 @@ import com.demo.demo.Service.AIService;
 import com.demo.demo.Service.BotService;
 import com.demo.demo.Service.ImageGenerationService;
 import com.demo.demo.Service.ImageRecognitionService;
+import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.voice.VoiceMessageHandler;
 import com.demo.demo.Utils.WeatherUtil;
 import com.demo.demo.execption.BizException;
@@ -42,6 +43,9 @@ public class BotController {
 
     @Resource
     private VoiceMessageHandler voiceMessageHandler;
+
+    @Resource
+    private ContextManager contextManager;
 
     // ==================== 初始化：设置自动回复 ====================
 
@@ -122,7 +126,11 @@ public class BotController {
             if (!imageRecognitionService.isConfigured()) {
                 return "图片识别未配置，请管理员设置 VISION_API_KEY 或 IMAGE_API_KEY";
             }
-            return imageRecognitionService.recognize(imageBytes);
+            String description = imageRecognitionService.recognize(imageBytes);
+            if (description != null && !description.isBlank()) {
+                contextManager.recordImage(fromUser, description.trim());
+            }
+            return description;
         });
         botService.setVoiceMessageHandler(voiceMessageHandler);
         log.info("[BotController] 自动回复处理器初始化完成");

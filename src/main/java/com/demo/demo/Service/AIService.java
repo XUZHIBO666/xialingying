@@ -1,5 +1,6 @@
 package com.demo.demo.Service;
 
+import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.memory.ConversationMemoryStore;
 import com.demo.demo.Service.memory.ConversationMessage;
 import com.google.gson.JsonArray;
@@ -38,14 +39,16 @@ AIService {
     private String systemPrompt;
 
     private final ConversationMemoryStore memoryStore;
+    private final ContextManager contextManager;
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
     private final OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .build();
 
-    public AIService(ConversationMemoryStore memoryStore) {
+    public AIService(ConversationMemoryStore memoryStore, ContextManager contextManager) {
         this.memoryStore = memoryStore;
+        this.contextManager = contextManager;
     }
 
     /** 调用 AI 生成回复，失败时返回 null。 */
@@ -122,7 +125,8 @@ AIService {
         JsonArray messages = new JsonArray();
         JsonObject system = new JsonObject();
         system.addProperty("role", "system");
-        system.addProperty("content", systemPrompt);
+        system.addProperty("content",
+                contextManager.buildEnhancedSystemMessage(userId, systemPrompt));
         messages.add(system);
 
         for (ConversationMessage saved : memoryStore.getHistory(userId)) {

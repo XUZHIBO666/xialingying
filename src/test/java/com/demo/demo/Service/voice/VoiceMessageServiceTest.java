@@ -1,6 +1,7 @@
 package com.demo.demo.Service.voice;
 
 import com.demo.demo.Service.AIService;
+import com.demo.demo.Service.context.ContextManager;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -21,7 +22,8 @@ class VoiceMessageServiceTest {
     private final AsrService asr = mock(AsrService.class);
     private final AIService ai = mock(AIService.class);
     private final TtsService tts = mock(TtsService.class);
-    private final VoiceMessageService service = new VoiceMessageService(codec, asr, ai, tts);
+    private final VoiceMessageService service = new VoiceMessageService(
+            codec, asr, ai, tts, new ContextManager());
 
     @Test
     void createsMp3ReplyFromRecognizedVoice() throws Exception {
