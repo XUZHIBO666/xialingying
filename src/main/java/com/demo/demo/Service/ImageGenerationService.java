@@ -140,7 +140,12 @@ public class ImageGenerationService {
         try (Response response = executeGenerationRequest(request)) {
             String body = response.body() == null ? "" : response.body().string();
             if (!response.isSuccessful()) {
-                throw new IOException("图片生成失败，HTTP " + response.code() + "：" + extractErrorMessage(body));
+                String errMsg = extractErrorMessage(body);
+                log.error("[图片生成] API 失败 httpStatus={} bodyPreview={}",
+                        response.code(),
+                        body == null ? "null" : body.substring(0, Math.min(200, body.length())));
+                throw new IOException("图片生成失败，HTTP " + response.code()
+                        + (errMsg.isEmpty() ? "" : "：" + errMsg));
             }
             return readImageBytes(body);
         }
@@ -150,23 +155,54 @@ public class ImageGenerationService {
         JsonObject root = JsonParser.parseString(body).getAsJsonObject();
         JsonArray images = root.getAsJsonArray("data");
         // SiliconFlow 返回 images，其他 OpenAI 兼容平台通常返回 data。
-        if (images == null) {
+        if (images == null || images.isEmpty()) {
             images = root.getAsJsonArray("images");
         }
         if (images == null || images.size() == 0 || !images.get(0).isJsonObject()) {
+            log.error("[图片生成] 响应格式异常 bodyPreview={}",
+                    body.substring(0, Math.min(300, body.length())));
             throw new IOException("图片生成响应为空");
         }
 
         JsonObject first = images.get(0).getAsJsonObject();
+
+        // 优先 b64_json（不需要额外下载，且通常质量更高）
         if (first.has("b64_json") && !first.get("b64_json").isJsonNull()) {
             byte[] bytes = Base64.getDecoder().decode(first.get("b64_json").getAsString());
             checkImageSize(bytes);
             return bytes;
         }
+
+        // url 字段——下载前放宽校验（SiliconFlow CDN 可能使用 HTTP）
         if (first.has("url") && !first.get("url").isJsonNull()) {
-            return downloadImage(first.get("url").getAsString());
+            String imageUrl = first.get("url").getAsString();
+            if (isSiliconFlowUrl(imageUrl)) {
+                return downloadFromTrustedUrl(imageUrl);
+            }
+            return downloadImage(imageUrl);
         }
+
+        log.error("[图片生成] 响应缺少 b64_json/url bodyPreview={}",
+                body.substring(0, Math.min(300, body.length())));
         throw new IOException("图片生成响应缺少 b64_json/url");
+    }
+
+    private boolean isSiliconFlowUrl(String url) {
+        return url != null && (url.contains("siliconflow") || url.contains("sf-maas"));
+    }
+
+    /** 从可信来源下载图片（放宽 SSRF 校验，允许 HTTP）。 */
+    private byte[] downloadFromTrustedUrl(String url) throws IOException {
+        Request request = new Request.Builder().url(url).build();
+        try (Response response = executeDownloadRequest(request)) {
+            if (!response.isSuccessful()) {
+                throw new IOException("下载图片失败，HTTP " + response.code());
+            }
+            ResponseBody respBody = response.body();
+            byte[] bytes = respBody == null ? new byte[0] : respBody.bytes();
+            checkImageSize(bytes);
+            return bytes;
+        }
     }
 
     private byte[] downloadImage(String url) throws IOException {

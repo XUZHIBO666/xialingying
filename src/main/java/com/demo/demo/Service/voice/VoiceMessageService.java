@@ -45,7 +45,7 @@ public class VoiceMessageService {
 
         String reply;
         try {
-            reply = aiService.chat(userId, recognizedText);
+            reply = aiService.chatWithTools(userId, recognizedText);
             if (reply == null || reply.isBlank()) {
                 return Result.textOnly(LLM_FAILURE_TEXT);
             }

@@ -32,7 +32,7 @@ class VoiceMessageServiceTest {
         byte[] outputMp3 = new byte[]{'I', 'D', '3'};
         when(codec.silkToPcm(inputSilk)).thenReturn(inputPcm);
         when(asr.transcribe(inputPcm)).thenReturn("用户问题");
-        when(ai.chat("wx-user", "用户问题")).thenReturn("LLM回答");
+        when(ai.chatWithTools("wx-user", "用户问题")).thenReturn("LLM回答");
         when(tts.synthesize("LLM回答")).thenReturn(outputMp3);
 
         VoiceMessageService.Result result = service.process("wx-user", inputSilk);
@@ -67,7 +67,7 @@ class VoiceMessageServiceTest {
     void llmFailureReturnsExactUnavailableMessage() throws Exception {
         when(codec.silkToPcm(new byte[]{1})).thenReturn(new byte[]{1, 0});
         when(asr.transcribe(new byte[]{1, 0})).thenReturn("问题");
-        when(ai.chat("wx-user", "问题")).thenReturn(null);
+        when(ai.chatWithTools("wx-user", "问题")).thenReturn(null);
 
         VoiceMessageService.Result result = service.process("wx-user", new byte[]{1});
 
@@ -89,6 +89,6 @@ class VoiceMessageServiceTest {
     private void prepareThroughLlm() throws Exception {
         when(codec.silkToPcm(new byte[]{1})).thenReturn(new byte[]{1, 0});
         when(asr.transcribe(new byte[]{1, 0})).thenReturn("问题");
-        when(ai.chat("wx-user", "问题")).thenReturn("回答");
+        when(ai.chatWithTools("wx-user", "问题")).thenReturn("回答");
     }
 }
