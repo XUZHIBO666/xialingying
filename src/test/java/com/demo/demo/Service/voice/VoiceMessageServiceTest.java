@@ -9,7 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class VoiceMessageServiceTest {
@@ -21,23 +24,21 @@ class VoiceMessageServiceTest {
     private final VoiceMessageService service = new VoiceMessageService(codec, asr, ai, tts);
 
     @Test
-    void createsSilkReplyFromRecognizedVoice() throws Exception {
+    void createsMp3ReplyFromRecognizedVoice() throws Exception {
         byte[] inputSilk = new byte[]{1};
         byte[] inputPcm = new byte[]{1, 0};
-        byte[] outputPcm = new byte[32000];
-        byte[] outputSilk = new byte[]{2};
+        byte[] outputMp3 = new byte[]{'I', 'D', '3'};
         when(codec.silkToPcm(inputSilk)).thenReturn(inputPcm);
         when(asr.transcribe(inputPcm)).thenReturn("用户问题");
         when(ai.chat("wx-user", "用户问题")).thenReturn("LLM回答");
-        when(tts.synthesize("LLM回答")).thenReturn(outputPcm);
-        when(codec.pcmToSilk(outputPcm)).thenReturn(outputSilk);
+        when(tts.synthesize("LLM回答")).thenReturn(outputMp3);
 
         VoiceMessageService.Result result = service.process("wx-user", inputSilk);
 
         assertEquals("LLM回答", result.text());
-        assertArrayEquals(outputSilk, result.silkAudio());
-        assertEquals(1000, result.playtimeMs());
-        assertTrue(result.hasVoice());
+        assertArrayEquals(outputMp3, result.mp3Audio());
+        assertTrue(result.hasMp3());
+        verify(codec, never()).pcmToSilk(any());
     }
 
     @Test
@@ -47,7 +48,7 @@ class VoiceMessageServiceTest {
         VoiceMessageService.Result result = service.process("wx-user", new byte[]{1});
 
         assertEquals("没有听清，请重新发送一段语音。", result.text());
-        assertFalse(result.hasVoice());
+        assertFalse(result.hasMp3());
     }
 
     @Test
@@ -69,7 +70,7 @@ class VoiceMessageServiceTest {
         VoiceMessageService.Result result = service.process("wx-user", new byte[]{1});
 
         assertEquals("当前服务暂时不可用，请稍后重试。", result.text());
-        assertFalse(result.hasVoice());
+        assertFalse(result.hasMp3());
     }
 
     @Test
@@ -80,20 +81,7 @@ class VoiceMessageServiceTest {
         VoiceMessageService.Result result = service.process("wx-user", new byte[]{1});
 
         assertEquals("回答", result.text());
-        assertFalse(result.hasVoice());
-    }
-
-    @Test
-    void silkEncodingFailureReturnsLlmText() throws Exception {
-        prepareThroughLlm();
-        byte[] outputPcm = new byte[]{1, 0};
-        when(tts.synthesize("回答")).thenReturn(outputPcm);
-        when(codec.pcmToSilk(outputPcm)).thenThrow(new IOException("encode failed"));
-
-        VoiceMessageService.Result result = service.process("wx-user", new byte[]{1});
-
-        assertEquals("回答", result.text());
-        assertFalse(result.hasVoice());
+        assertFalse(result.hasMp3());
     }
 
     private void prepareThroughLlm() throws Exception {

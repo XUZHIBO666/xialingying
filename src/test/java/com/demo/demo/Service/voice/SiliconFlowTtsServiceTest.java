@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class SiliconFlowTtsServiceTest {
 
@@ -27,8 +28,8 @@ class SiliconFlowTtsServiceTest {
     }
 
     @Test
-    void synthesizes16kPcmWithConfiguredVoice() throws Exception {
-        byte[] expectedPcm = new byte[]{1, 0, 2, 0};
+    void synthesizesMp3WithConfiguredVoice() throws Exception {
+        byte[] expectedMp3 = new byte[]{'I', 'D', '3', 4, 0, 0};
         AtomicReference<String> authorization = new AtomicReference<>();
         AtomicReference<JsonObject> requestBody = new AtomicReference<>();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -36,7 +37,7 @@ class SiliconFlowTtsServiceTest {
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             requestBody.set(JsonParser.parseString(new String(
                     exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
-            send(exchange, 200, expectedPcm);
+            send(exchange, 200, expectedMp3);
         });
         server.start();
 
@@ -47,13 +48,13 @@ class SiliconFlowTtsServiceTest {
 
         byte[] actual = service.synthesize("你好");
 
-        assertArrayEquals(expectedPcm, actual);
+        assertArrayEquals(expectedMp3, actual);
         assertEquals("Bearer test-key", authorization.get());
         assertEquals("FunAudioLLM/CosyVoice2-0.5B", requestBody.get().get("model").getAsString());
         assertEquals("FunAudioLLM/CosyVoice2-0.5B:anna", requestBody.get().get("voice").getAsString());
         assertEquals("你好", requestBody.get().get("input").getAsString());
-        assertEquals("pcm", requestBody.get().get("response_format").getAsString());
-        assertEquals(16000, requestBody.get().get("sample_rate").getAsInt());
+        assertEquals("mp3", requestBody.get().get("response_format").getAsString());
+        assertFalse(requestBody.get().has("sample_rate"));
         assertEquals(false, requestBody.get().get("stream").getAsBoolean());
     }
 

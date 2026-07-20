@@ -51,24 +51,21 @@ public class VoiceMessageService {
         }
 
         try {
-            byte[] replyPcm = ttsService.synthesize(reply);
-            byte[] replySilk = audioCodecService.pcmToSilk(replyPcm);
-            int playtimeMs = Math.max(1, (int) Math.min(Integer.MAX_VALUE,
-                    replyPcm.length * 1000L / (16000 * 2)));
-            return new Result(reply, replySilk, playtimeMs);
+            byte[] replyMp3 = ttsService.synthesize(reply);
+            return new Result(reply, replyMp3);
         } catch (Exception e) {
-            log.warn("[语音处理] TTS 或 SILK 编码失败，降级文字回复: {}", e.getMessage());
+            log.warn("[语音处理] TTS 失败，降级文字回复: {}", e.getMessage());
             return Result.textOnly(reply);
         }
     }
 
-    public record Result(String text, byte[] silkAudio, int playtimeMs) {
+    public record Result(String text, byte[] mp3Audio) {
         public static Result textOnly(String text) {
-            return new Result(text, null, 0);
+            return new Result(text, null);
         }
 
-        public boolean hasVoice() {
-            return silkAudio != null && silkAudio.length > 0;
+        public boolean hasMp3() {
+            return mp3Audio != null && mp3Audio.length > 0;
         }
     }
 }

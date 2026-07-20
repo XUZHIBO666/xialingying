@@ -11,7 +11,7 @@
 - 手动回复：网页控制台可以选择最近发消息的用户并手动发送文本。
 - 图片生成：收到图片触发消息后，调用 OpenAI 兼容的图片生成接口生成图片，并通过 iLink SDK 上传、发送图片消息。
 - 图片识别：收到用户发送的图片后，下载图片并调用视觉模型识别，再用文本回复图片内容。
-- 语音助手：微信 SILK 语音经过 SiliconFlow ASR、现有 LLM 和 SiliconFlow TTS 后，以原生 SILK 语音回复。
+- 语音助手：微信 SILK 语音经过 SiliconFlow ASR、现有 LLM 和 SiliconFlow TTS 后，以可下载播放的 MP3 文件回复。
 
 ## 图片生成用法
 
@@ -42,7 +42,6 @@ VISION_MODEL=Qwen/Qwen3-VL-8B-Instruct
 VOICE_ASR_API_KEY=你的SiliconFlow密钥
 VOICE_TTS_API_KEY=你的SiliconFlow密钥
 VOICE_SILK_DECODER_PATH=本地decoder可执行文件路径
-VOICE_SILK_ENCODER_PATH=本地silk_v3_encoder可执行文件路径
 ```
 
 `IMAGE_API_URL` 需要支持 OpenAI 兼容的 `POST /v1/images/generations`，响应可以返回 `data[0].b64_json` 或 `data[0].url`。
@@ -62,7 +61,7 @@ VOICE_TTS_VOICE=FunAudioLLM/CosyVoice2-0.5B:anna
 VOICE_AUDIO_PROCESS_TIMEOUT=30s
 ```
 
-本地编解码器需兼容 [silk-v3-decoder](https://github.com/kn007/silk-v3-decoder) 的命令行参数。构建该项目的 `decoder` 和 `silk_v3_encoder`，并把绝对路径分别配置到 `VOICE_SILK_DECODER_PATH`、`VOICE_SILK_ENCODER_PATH`。编码器必须支持 `-tencent`，输出应以 `0x02 + #!SILK_V3` 开头。服务内部音频固定为 PCM S16LE、16000 Hz、单声道，不需要 FFmpeg。
+本地解码器需兼容 [silk-v3-decoder](https://github.com/kn007/silk-v3-decoder) 的命令行参数。构建该项目的 `decoder`，并把绝对路径配置到 `VOICE_SILK_DECODER_PATH`。入站音频在服务内部转换为 PCM S16LE、16000 Hz、单声道；出站 MP3 由 SiliconFlow 直接生成，不需要 FFmpeg 或本地 SILK encoder。
 
 ## 运行
 

@@ -376,11 +376,12 @@ public class BotService {
                 messages.add(new Msg(fromUser, rememberReplyTarget(fromUser, contextToken),
                         "[语音] " + result.text()));
                 displayLog(fromUser + ": [语音]");
-                if (!result.hasVoice() || !sendVoiceReply(fromUser, contextToken,
-                        result.silkAudio(), result.playtimeMs())) {
+                boolean mp3ReplySent = result.hasMp3() && sendMp3Reply(fromUser, contextToken,
+                        result.mp3Audio());
+                if (!mp3ReplySent) {
                     sendReply(fromUser, contextToken, result.text());
                 }
-                log.info("[语音处理] from={} voiceReply={} totalMs={}", fromUser, result.hasVoice(),
+                log.info("[语音处理] from={} mp3Reply={} totalMs={}", fromUser, mp3ReplySent,
                         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -501,17 +502,21 @@ public class BotService {
         }
     }
 
-    private boolean sendVoiceReply(String toUserId, String contextToken, byte[] silkAudio, int playtimeMs) {
-        if (!loggedIn || silkAudio == null || silkAudio.length == 0) {
+    private boolean sendMp3Reply(String toUserId, String contextToken, byte[] mp3Audio) {
+        if (!loggedIn || mp3Audio == null || mp3Audio.length == 0) {
             return false;
         }
         try {
-            ILinkClient.MediaInfo media = client.uploadMedia(credentials.get(), 4, toUserId, silkAudio);
-            client.sendVoiceMessage(credentials.get(), toUserId, contextToken, media, playtimeMs, 1);
-            displayLog("语音回复 -> " + toUserId + " (" + playtimeMs + " ms)");
+            ILinkClient.MediaInfo media = client.uploadMedia(credentials.get(), 3, toUserId, mp3Audio);
+            String fileName = "voice-reply-" + System.currentTimeMillis() + ".mp3";
+            client.sendFileMessage(credentials.get(), toUserId, contextToken, media,
+                    fileName, mp3Audio.length);
+            log.info("[iLink] MP3 文件发送成功 to={} mp3Bytes={} fileName={}",
+                    toUserId, mp3Audio.length, fileName);
+            displayLog("MP3 回复 -> " + toUserId + " (" + mp3Audio.length + " bytes)");
             return true;
         } catch (Exception e) {
-            log.error("[iLink] 语音消息发送失败 to={} error={}", toUserId, e.getMessage(), e);
+            log.error("[iLink] MP3 文件发送失败 to={} error={}", toUserId, e.getMessage(), e);
             return false;
         }
     }

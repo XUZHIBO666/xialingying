@@ -16,7 +16,7 @@ import java.io.IOException;
 public class SiliconFlowTtsService implements TtsService {
 
     private static final MediaType JSON = MediaType.parse("application/json");
-    private static final int MAX_PCM_BYTES = 50 * 1024 * 1024;
+    private static final int MAX_MP3_BYTES = 50 * 1024 * 1024;
 
     private final VoiceProperties properties;
     private final OkHttpClient httpClient;
@@ -54,8 +54,7 @@ public class SiliconFlowTtsService implements TtsService {
         body.addProperty("model", properties.getTts().getModel());
         body.addProperty("voice", properties.getTts().getVoice());
         body.addProperty("input", text);
-        body.addProperty("response_format", "pcm");
-        body.addProperty("sample_rate", 16000);
+        body.addProperty("response_format", "mp3");
         body.addProperty("stream", false);
 
         Request request = new Request.Builder()
@@ -68,11 +67,11 @@ public class SiliconFlowTtsService implements TtsService {
             if (!response.isSuccessful()) {
                 throw new IOException("语音合成失败，HTTP " + response.code());
             }
-            byte[] pcm = response.body() == null ? new byte[0] : response.body().bytes();
-            if (pcm.length == 0 || pcm.length > MAX_PCM_BYTES || pcm.length % 2 != 0) {
+            byte[] mp3 = response.body() == null ? new byte[0] : response.body().bytes();
+            if (mp3.length == 0 || mp3.length > MAX_MP3_BYTES) {
                 throw new IOException("语音合成结果大小无效");
             }
-            return pcm;
+            return mp3;
         }
     }
 

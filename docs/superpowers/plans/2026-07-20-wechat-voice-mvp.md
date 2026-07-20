@@ -88,3 +88,40 @@
 3. Run `mvn.cmd test`.
 4. Run `mvn.cmd clean package`.
 5. Inspect `git diff --check`, `git diff --stat`, and `git status --short`.
+
+## Task 7: Correct Outbound SILK Metadata
+
+**Files:**
+- Modify: `src/test/java/com/demo/demo/Service/VoiceMessageReplyTest.java`
+- Modify: `src/main/java/com/demo/demo/Service/BotService.java`
+- Modify: `docs/superpowers/specs/2026-07-20-wechat-voice-mvp-design.md`
+
+1. Change the successful voice-reply test to require `sendVoiceMessage(..., playtimeMs, 6)` and run `mvn.cmd -Dtest=VoiceMessageReplyTest test`; expect failure because production currently sends encode type `1`.
+2. Add a named SILK encode-type constant with value `6`, use it in `sendVoiceReply`, and log non-sensitive byte length and playtime after successful upload/send.
+3. Re-run `mvn.cmd -Dtest=VoiceMessageReplyTest test`; expect both tests to pass.
+4. Run `mvn.cmd test`, `mvn.cmd -DskipTests package`, `git diff --check`, and inspect `git status --short`.
+
+## Task 8: Complete SDK 1.0.1 Voice Metadata
+
+**Files:**
+- Modify: `src/test/java/com/demo/demo/Service/VoiceMessageReplyTest.java`
+- Modify: `src/main/java/com/demo/demo/Service/BotService.java`
+- Modify: `docs/superpowers/specs/2026-07-20-wechat-voice-mvp-design.md`
+
+1. Add a failing test requiring a complete SDK `SendMessageRequest` voice item and a send-failure text fallback.
+2. Keep `uploadMedia(..., 4, ...)`, then build the SDK DTO with item type `3`, SILK encode type `6`, 16 bits, 16000 Hz, and millisecond playtime before calling `sendMessage(...)`.
+3. Run the focused test, full test suite, package build, and Git diff checks.
+4. Restart the application and manually verify that WeChat renders a playable native voice bubble.
+
+## Task 9: Replace Unreliable Native Voice with MP3 Attachment
+
+**Files:**
+- Modify: `src/main/java/com/demo/demo/Service/voice/SiliconFlowTtsService.java`
+- Modify: `src/main/java/com/demo/demo/Service/voice/VoiceMessageService.java`
+- Modify: `src/main/java/com/demo/demo/Service/BotService.java`
+- Modify: corresponding voice tests and documentation
+
+1. Request MP3 directly from SiliconFlow instead of PCM for the outbound reply.
+2. Return MP3 bytes from voice orchestration without outbound SILK encoding.
+3. Upload with media type `3` and send through `sendFileMessage(...)` using a `.mp3` filename.
+4. Send no duplicate text after success; fall back to the generated LLM text on TTS, upload, or file-send failure.
