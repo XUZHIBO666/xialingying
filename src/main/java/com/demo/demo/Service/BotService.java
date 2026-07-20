@@ -389,24 +389,31 @@ public class BotService {
             displayLog(fromUser + ": [图片消息为空]");
             return;
         }
-        try {
-            // iLink SDK 的 downloadMedia 第一个参数实际需要 CDN 的 encryptQueryParam；
-            // url 只作为少数兼容场景的兜底，否则会出现“下载媒体失败”。
-            String mediaParam = image.getEncryptQueryParam();
-            if (mediaParam == null || mediaParam.isBlank()) {
-                mediaParam = image.getUrl();
-            }
-            log.info("[iLink] 下载图片 mediaParam={} aesKeyPresent={} urlPresent={}",
-                    mediaParam == null ? "null" : mediaParam.substring(0, Math.min(mediaParam.length(), 24)) + "...",
-                    image.getAesKey() != null && !image.getAesKey().isBlank(),
-                    image.getUrl() != null && !image.getUrl().isBlank());
-            byte[] imageBytes = client.downloadMedia(mediaParam, image.getAesKey());
-            processImageMessage(fromUser, contextToken, imageBytes);
-        } catch (Exception e) {
-            log.error("[iLink] 图片下载失败 from={} error={}", fromUser, e.getMessage(), e);
-            displayLog("图片下载失败: " + e.getMessage());
-            sendReply(fromUser, contextToken, "收到图片了，但图片下载失败，暂时无法识别。");
+
+        // 提取下载参数（在监听线程中同步完成，不阻塞）
+        String mediaParam = image.getEncryptQueryParam();
+        if (mediaParam == null || mediaParam.isBlank()) {
+            mediaParam = image.getUrl();
         }
+        final String aesKey = image.getAesKey();
+        final String downloadParam = mediaParam;
+
+        // 提交到回复线程池异步下载和识别，避免 CDN 下载阻塞消息监听线程。
+        submitReplyTask(fromUser, contextToken, () -> {
+            try {
+                log.info("[iLink] 下载图片 param={} aesKeyPresent={}",
+                        downloadParam == null ? "null"
+                                : downloadParam.substring(0,
+                                        Math.min(downloadParam.length(), 24)) + "...",
+                        aesKey != null && !aesKey.isBlank());
+                byte[] imageBytes = client.downloadMedia(downloadParam, aesKey);
+                processImageMessage(fromUser, contextToken, imageBytes);
+            } catch (Exception e) {
+                log.error("[iLink] 图片下载失败 from={} error={}", fromUser, e.getMessage(), e);
+                displayLog("图片下载失败: " + e.getMessage());
+                sendReply(fromUser, contextToken, "收到图片了，但图片下载失败，暂时无法识别。");
+            }
+        });
     }
 
     private void processVoiceMessage(String fromUser, String contextToken, VoiceContent voice) {

@@ -191,7 +191,7 @@ class ImageAutoReplyTest {
 
         ReflectionTestUtils.invokeMethod(botService, "processImageItem", "wx-user", "ctx-token", image);
 
-        verify(client).downloadMedia("encrypt-query-param", "aes-key");
+        verify(client, timeout(1000)).downloadMedia("encrypt-query-param", "aes-key");
         verify(client, never()).downloadMedia(eq("https://wrong-url.example/image.jpg"), anyString());
         verify(client, timeout(1000)).sendTextMessage(any(LoginCredentials.class), eq("wx-user"), eq("ctx-token"),
                 eq("图片识别成功。"));
