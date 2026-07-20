@@ -34,7 +34,7 @@ class ImageAutoReplyTest {
         botService.processTextMessage("wx-user", "ctx-token", "生成图片：星空");
 
         verify(client).sendTextMessage(any(LoginCredentials.class), eq("wx-user"), eq("ctx-token"),
-                eq("当前任务较多，请稍后再试"));
+                eq("服务正在维护中，请稍后再试。"));
     }
 
     @Test

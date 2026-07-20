@@ -1,5 +1,6 @@
 package com.demo.demo.Service;
 
+import com.demo.demo.Service.throttle.UserRateLimiter;
 import com.demo.demo.Service.voice.VoiceMessageHandler;
 import com.demo.demo.Service.voice.VoiceMessageService;
 import com.lth.wechat.ilink.ILinkClient;
@@ -18,7 +19,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
@@ -27,10 +27,12 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -48,13 +50,25 @@ import java.util.concurrent.atomic.AtomicReference;
 @Service
 public class BotService {
 
-    private static final int REPLY_WORKER_COUNT = 2;
-    private static final int REPLY_QUEUE_CAPACITY = 20;
+    // 回复线程池配置（可通过环境变量覆盖）
+    private static final int REPLY_WORKER_COUNT = Integer.parseInt(
+            System.getenv().getOrDefault("BOT_REPLY_THREADS", "4"));
+    private static final int REPLY_QUEUE_CAPACITY = Integer.parseInt(
+            System.getenv().getOrDefault("BOT_REPLY_QUEUE_CAPACITY", "200"));
     private static final int REPLY_TARGET_CAPACITY = 200;
     private static final int PROCESSED_MESSAGE_CAPACITY = 1000;
     private static final long PROCESSED_MESSAGE_TTL_MS = TimeUnit.MINUTES.toMillis(10);
     private static final AtomicInteger REPLY_THREAD_SEQUENCE = new AtomicInteger();
     private static final AtomicInteger VOICE_THREAD_SEQUENCE = new AtomicInteger();
+
+    // 速率限制（可通过环境变量覆盖）
+    private final UserRateLimiter rateLimiter = new UserRateLimiter(
+            Double.parseDouble(System.getenv().getOrDefault("BOT_RATE_LIMIT_PER_SECOND", "0.5")),
+            Integer.parseInt(System.getenv().getOrDefault("BOT_RATE_LIMIT_BURST", "2")));
+
+    // 指标计数器
+    private final AtomicLong totalRateLimitAccepted = new AtomicLong();
+    private final AtomicLong totalRateLimitRejected = new AtomicLong();
 
     private final ILinkClient client;
     private final ExecutorService replyExecutor;
@@ -103,17 +117,16 @@ public class BotService {
         return new ThreadPoolExecutor(
                 REPLY_WORKER_COUNT,
                 REPLY_WORKER_COUNT,
-                0L,
-                TimeUnit.MILLISECONDS,
-                // 队列必须有上限，避免图片平台变慢时任务无限堆积并耗尽内存。
-                new ArrayBlockingQueue<>(REPLY_QUEUE_CAPACITY),
+                60L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(REPLY_QUEUE_CAPACITY),
                 runnable -> {
                     Thread thread = new Thread(runnable,
                             "bot-reply-" + REPLY_THREAD_SEQUENCE.incrementAndGet());
                     thread.setDaemon(true);
                     return thread;
                 },
-                new ThreadPoolExecutor.AbortPolicy());
+                new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
     @PreDestroy
@@ -432,6 +445,15 @@ public class BotService {
     }
 
     private void submitReplyTask(String fromUser, String contextToken, Runnable task) {
+        // 速率限制检查
+        if (!rateLimiter.tryAcquire(fromUser)) {
+            totalRateLimitRejected.incrementAndGet();
+            log.info("[限速] from={} 消息被限速", maskUserId(fromUser));
+            sendReply(fromUser, contextToken, "你的消息太快了，请稍后再发。");
+            return;
+        }
+        totalRateLimitAccepted.incrementAndGet();
+
         try {
             Object userLock = userReplyLocks.computeIfAbsent(fromUser, ignored -> new Object());
             replyExecutor.execute(() -> {
@@ -440,9 +462,9 @@ public class BotService {
                 }
             });
         } catch (RejectedExecutionException e) {
-            log.warn("[iLink] 自动回复任务队列已满 from={}", fromUser);
-            displayLog("自动回复任务较多，已拒绝新任务");
-            sendReply(fromUser, contextToken, "当前任务较多，请稍后再试");
+            // CallerRunsPolicy 下几乎不会到达此处，仅在 shutdown 后触发
+            log.warn("[iLink] 自动回复任务被拒绝（可能在关闭中） from={}", maskUserId(fromUser));
+            sendReply(fromUser, contextToken, "服务正在维护中，请稍后再试。");
         }
     }
 
@@ -530,6 +552,37 @@ public class BotService {
     public List<String> getLogs()    { return new ArrayList<>(logs); }
     public List<Msg> getMessages()   { return new ArrayList<>(messages); }
 
+    /** 回复队列当前大小。 */
+    public int getReplyQueueSize() {
+        return replyExecutor instanceof ThreadPoolExecutor tp
+                ? tp.getQueue().size() : 0;
+    }
+
+    /** 回复队列容量。 */
+    public int getReplyQueueCapacity() {
+        return REPLY_QUEUE_CAPACITY;
+    }
+
+    /** 回复线程池（供健康检查端点使用）。 */
+    public ExecutorService getReplyExecutor() {
+        return replyExecutor;
+    }
+
+    /** 限速器活跃桶数。 */
+    public int getRateLimiterBucketCount() {
+        return rateLimiter.getBucketCount();
+    }
+
+    /** 限速累计接受数。 */
+    public long getTotalRateLimitAccepted() {
+        return totalRateLimitAccepted.get();
+    }
+
+    /** 限速累计拒绝数。 */
+    public long getTotalRateLimitRejected() {
+        return totalRateLimitRejected.get();
+    }
+
     public List<Msg> pollMessages() {
         if (messages.isEmpty()) return Collections.emptyList();
         List<Msg> result = new ArrayList<>(messages);
@@ -598,6 +651,11 @@ public class BotService {
         if (token == null || token.isBlank()) return "null";
         if (token.length() <= 8) return "***";
         return token.substring(0, 4) + "..." + token.substring(token.length() - 4);
+    }
+
+    private static String maskUserId(String userId) {
+        if (userId == null || userId.length() < 9) return "***";
+        return userId.substring(0, 4) + "..." + userId.substring(userId.length() - 4);
     }
 
     /** 把 SDK 返回的各种格式统一转成纯 base64（前端 img 标签直接用） */
