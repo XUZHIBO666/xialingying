@@ -22,7 +22,8 @@ import java.util.concurrent.TimeUnit;
 /** 调用兼容 OpenAI Chat Completions 接口的 LLM 服务。 */
 @Slf4j
 @Service
-public class AIService {
+public class
+AIService {
 
     @Value("${ai.api.key:}")
     private String apiKey;
@@ -94,6 +95,11 @@ public class AIService {
                         .get(0).getAsJsonObject()
                         .getAsJsonObject("message")
                         .get("content").getAsString().trim();
+                if (reply.isEmpty()) {
+                    log.warn("[AI] 回复为空 userId={}", maskUserId(userId));
+                    return null;
+                }
+
                 try {
                     memoryStore.appendTurn(userId, message, reply);
                 } catch (IOException e) {
