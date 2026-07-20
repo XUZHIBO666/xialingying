@@ -74,6 +74,7 @@ public class BotService {
     private final ExecutorService replyExecutor;
 
     // 状态（线程安全）
+    private volatile boolean shuttingDown = false;
     private final AtomicReference<String> qrCodeBase64 = new AtomicReference<>();
     private final AtomicReference<String> qrCodeUrl = new AtomicReference<>();
     private final AtomicReference<String> statusText = new AtomicReference<>("未启动");
@@ -130,11 +131,48 @@ public class BotService {
     }
 
     @PreDestroy
-    public void shutdownReplyExecutor() {
+    public synchronized void shutdown() {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        log.info("[iLink] 开始优雅关闭...");
+
+        // 1. 标记离线，阻止新的登录和消息处理
         loggedIn = false;
-        if (loginThread != null) loginThread.interrupt();
-        if (listenThread != null) listenThread.interrupt();
-        replyExecutor.shutdownNow();
+
+        // 2. 中断登录线程
+        if (loginThread != null && loginThread.isAlive()) {
+            loginThread.interrupt();
+            log.info("[iLink] 已请求停止登录线程");
+        }
+
+        // 3. 中断消息监听线程
+        if (listenThread != null && listenThread.isAlive()) {
+            listenThread.interrupt();
+            log.info("[iLink] 已请求停止监听线程");
+        }
+
+        // 4. 停止接收新回复任务
+        replyExecutor.shutdown();
+
+        // 5. 等待已提交任务完成（上限 5 秒）
+        try {
+            if (!replyExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                int pending = replyExecutor instanceof ThreadPoolExecutor tp
+                        ? tp.getActiveCount() + tp.getQueue().size() : 0;
+                log.warn("[iLink] 关闭超时，强制取消 {} 个待处理任务", pending);
+                replyExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            replyExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
+        // 6. 清理状态
+        credentials.set(null);
+        qrCodeBase64.set(null);
+        qrCodeUrl.set(null);
+        cursor = "";
+        log.info("[iLink] 优雅关闭完成");
     }
 
     // ==================== 公开方法 ====================
@@ -150,6 +188,7 @@ public class BotService {
     }
 
     private synchronized void startLogin(boolean force) {
+        if (shuttingDown) return;
         if (loggedIn && !force) return;
         if (!force && loginThread != null && loginThread.isAlive()) return;
 
@@ -246,6 +285,7 @@ public class BotService {
 
     /** 启动消息监听（iLink 消息接收轮询） */
     private void startListening() {
+        if (shuttingDown) return;
         if (listenThread != null && listenThread.isAlive()) {
             log.info("[iLink] 消息监听线程已在运行，跳过重复启动");
             return;
