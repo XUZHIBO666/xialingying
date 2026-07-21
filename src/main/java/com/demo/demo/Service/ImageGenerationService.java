@@ -140,20 +140,17 @@ public class ImageGenerationService {
         try (Response response = executeGenerationRequest(request)) {
             String body = response.body() == null ? "" : response.body().string();
             if (!response.isSuccessful()) {
-                String errMsg = extractErrorMessage(body);
-                log.error("[图片生成] API 失败 httpStatus={} bodyPreview={}",
-                        response.code(),
-                        body == null ? "null" : body.substring(0, Math.min(200, body.length())));
-                throw new IOException("图片生成失败，HTTP " + response.code()
-                        + (errMsg.isEmpty() ? "" : "：" + errMsg));
+                String traceId = response.header("x-siliconcloud-trace-id", "missing");
+                log.error("[图片生成] API 失败 httpStatus={} traceId={}",
+                        response.code(), traceId);
+                throw new IOException("图片生成服务暂时不可用，HTTP " + response.code());
             }
             return readImageBytes(body);
         } catch (java.net.ConnectException e) {
-            throw new IOException("无法连接图片生成服务（" + apiUrl + "），请检查 IMAGE_API_URL 配置和网络");
+            throw new IOException("无法连接图片生成服务，请检查配置和网络");
         } catch (java.net.SocketTimeoutException e) {
             throw new IOException("图片生成服务响应超时，请稍后重试");
         } catch (IOException e) {
-            // 重新抛出（不包装已包装过的异常）
             throw e;
         }
     }
@@ -166,8 +163,7 @@ public class ImageGenerationService {
             images = root.getAsJsonArray("images");
         }
         if (images == null || images.size() == 0 || !images.get(0).isJsonObject()) {
-            log.error("[图片生成] 响应格式异常 bodyPreview={}",
-                    body.substring(0, Math.min(300, body.length())));
+            log.error("[图片生成] 响应格式异常，缺少可用的图片数据");
             throw new IOException("图片生成响应为空");
         }
 
@@ -180,36 +176,13 @@ public class ImageGenerationService {
             return bytes;
         }
 
-        // url 字段——下载前放宽校验（SiliconFlow CDN 可能使用 HTTP）
+        // url 字段——所有 URL 必须通过 validateDownloadUrl 校验
         if (first.has("url") && !first.get("url").isJsonNull()) {
-            String imageUrl = first.get("url").getAsString();
-            if (isSiliconFlowUrl(imageUrl)) {
-                return downloadFromTrustedUrl(imageUrl);
-            }
-            return downloadImage(imageUrl);
+            return downloadImage(first.get("url").getAsString());
         }
 
-        log.error("[图片生成] 响应缺少 b64_json/url bodyPreview={}",
-                body.substring(0, Math.min(300, body.length())));
+        log.error("[图片生成] 响应缺少 b64_json/url");
         throw new IOException("图片生成响应缺少 b64_json/url");
-    }
-
-    private boolean isSiliconFlowUrl(String url) {
-        return url != null && (url.contains("siliconflow") || url.contains("sf-maas"));
-    }
-
-    /** 从可信来源下载图片（放宽 SSRF 校验，允许 HTTP）。 */
-    private byte[] downloadFromTrustedUrl(String url) throws IOException {
-        Request request = new Request.Builder().url(url).build();
-        try (Response response = executeDownloadRequest(request)) {
-            if (!response.isSuccessful()) {
-                throw new IOException("下载图片失败，HTTP " + response.code());
-            }
-            ResponseBody respBody = response.body();
-            byte[] bytes = respBody == null ? new byte[0] : respBody.bytes();
-            checkImageSize(bytes);
-            return bytes;
-        }
     }
 
     private byte[] downloadImage(String url) throws IOException {
@@ -255,7 +228,8 @@ public class ImageGenerationService {
                 if (attempt == MAX_HTTP_ATTEMPTS) {
                     throw e;
                 }
-                log.warn("[图片下载] 网络异常，准备第 {} 次请求: {}", attempt + 1, e.getMessage());
+                log.warn("[图片下载] 网络异常，准备第 {} 次请求 type={}",
+                        attempt + 1, e.getClass().getSimpleName());
             }
             waitBeforeRetry(attempt);
         }
@@ -334,27 +308,6 @@ public class ImageGenerationService {
             Thread.currentThread().interrupt();
             throw new IOException("等待重试时被中断", e);
         }
-    }
-
-    private String extractErrorMessage(String json) {
-        if (json == null || json.isBlank()) {
-            return "平台未返回错误详情";
-        }
-        try {
-            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-            if (root.has("message") && !root.get("message").isJsonNull()) {
-                return root.get("message").getAsString();
-            }
-            if (root.has("error") && root.get("error").isJsonObject()) {
-                JsonObject error = root.getAsJsonObject("error");
-                if (error.has("message") && !error.get("message").isJsonNull()) {
-                    return error.get("message").getAsString();
-                }
-            }
-        } catch (Exception ignored) {
-            return json.length() > 120 ? json.substring(0, 120) : json;
-        }
-        return json.length() > 120 ? json.substring(0, 120) : json;
     }
 
     private void checkImageSize(byte[] bytes) throws IOException {

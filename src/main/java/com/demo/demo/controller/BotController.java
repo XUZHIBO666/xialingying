@@ -72,7 +72,7 @@ public class BotController {
                     return sent ? null : "图片已生成，但发送失败了，请稍后再试";
                 } catch (Exception e) {
                     log.error("[自动回复] 图片生成失败", e);
-                    return "抱歉，图片生成失败了：" + e.getMessage();
+                    return "抱歉，图片生成失败了，请稍后再试";
                 }
             }
 

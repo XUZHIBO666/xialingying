@@ -171,14 +171,14 @@ class ImageGenerationServiceTest {
     }
 
     @Test
-    void includesProviderErrorMessageWhenGenerationFails() throws Exception {
+    void generationFailureDoesNotLeakProviderBodyToCaller() throws Exception {
         startServer(exchange ->
                 send(exchange, 403, "{\"error\":{\"message\":\"Model disabled.\"}}"));
 
         IOException exception = assertThrows(IOException.class,
                 () -> service().generateImage("无权限模型"));
 
-        assertEquals("图片生成失败，HTTP 403：Model disabled.", exception.getMessage());
+        assertEquals("图片生成服务暂时不可用，HTTP 403", exception.getMessage());
     }
 
     @Test
@@ -264,6 +264,30 @@ class ImageGenerationServiceTest {
         IOException exception = assertThrows(IOException.class, () -> service().generateImage("空响应"));
 
         assertTrue(exception.getMessage().contains("b64_json/url"));
+    }
+
+    @Test
+    void rejectsLocalUrlEvenWhenPathContainsSiliconflow() throws Exception {
+        startServer(exchange ->
+                send(exchange, 200,
+                        "{\"images\":[{\"url\":\"http://127.0.0.1/siliconflow/image.png\"}]}"));
+
+        IOException error = assertThrows(IOException.class,
+                () -> service().generateImage("unsafe"));
+
+        assertTrue(error.getMessage().contains("不安全") || error.getMessage().contains("HTTPS"));
+    }
+
+    @Test
+    void rejectsLocalUrlEvenWhenHostContainsSfMaas() throws Exception {
+        startServer(exchange ->
+                send(exchange, 200,
+                        "{\"data\":[{\"url\":\"https://127.0.0.1/sf-maas/image.png\"}]}"));
+
+        IOException error = assertThrows(IOException.class,
+                () -> service().generateImage("unsafe-sf-maas"));
+
+        assertTrue(error.getMessage().contains("不安全"));
     }
 
     private ImageGenerationService service() {
