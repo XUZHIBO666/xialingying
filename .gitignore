@@ -7,12 +7,14 @@ target/
 
 # IDE
 .idea/
+.worktrees/
 *.iml
 *.iws
 *.ipr
 
 # Logs
 logs/
+data/
 *.log
 
 # Build output

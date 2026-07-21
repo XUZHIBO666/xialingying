@@ -11,6 +11,7 @@
 - 手动回复：网页控制台可以选择最近发消息的用户并手动发送文本。
 - 图片生成：收到图片触发消息后，调用 OpenAI 兼容的图片生成接口生成图片，并通过 iLink SDK 上传、发送图片消息。
 - 图片识别：收到用户发送的图片后，下载图片并调用视觉模型识别，再用文本回复图片内容。
+- 语音助手：微信 SILK 语音经过 SiliconFlow ASR、现有 LLM 和 SiliconFlow TTS 后，以可下载播放的 MP3 文件回复。
 
 ## 图片生成用法
 
@@ -31,18 +32,51 @@
 
 ```bash
 AI_API_KEY=你的聊天模型密钥
-IMAGE_API_KEY=你的图片生成密钥
-IMAGE_API_URL=https://api.openai.com
-IMAGE_MODEL=gpt-image-1
+IMAGE_API_KEY=你的图片生成密钥（与 SiliconFlow 其他 Key 可共用）
+IMAGE_API_URL=https://api.siliconflow.cn
+IMAGE_MODEL=Kwai-Kolors/Kolors
 IMAGE_SIZE=1024x1024
 VISION_API_KEY=你的视觉模型密钥
 VISION_API_URL=https://api.siliconflow.cn
 VISION_MODEL=Qwen/Qwen3-VL-8B-Instruct
+VOICE_ASR_API_KEY=你的SiliconFlow密钥
+VOICE_TTS_API_KEY=你的SiliconFlow密钥
+VOICE_SILK_DECODER_PATH=本地decoder可执行文件路径
 ```
 
 `IMAGE_API_URL` 需要支持 OpenAI 兼容的 `POST /v1/images/generations`，响应可以返回 `data[0].b64_json` 或 `data[0].url`。
 
 `VISION_API_URL` 需要支持 OpenAI 兼容的 `POST /v1/chat/completions`，并支持 `image_url` 多模态输入。使用 SiliconFlow 时，`VISION_API_KEY` 可以和 `IMAGE_API_KEY` 使用同一个 Key。
+
+### 微信语音 MVP 配置
+
+ASR 和 TTS 默认使用 SiliconFlow；两者可以使用同一个 Key。可选配置包括：
+
+```text
+VOICE_ASR_API_URL=https://api.siliconflow.cn
+VOICE_ASR_MODEL=FunAudioLLM/SenseVoiceSmall
+VOICE_TTS_API_URL=https://api.siliconflow.cn
+VOICE_TTS_MODEL=FunAudioLLM/CosyVoice2-0.5B
+VOICE_TTS_VOICE=FunAudioLLM/CosyVoice2-0.5B:anna
+VOICE_AUDIO_PROCESS_TIMEOUT=30s
+```
+
+本地解码器需兼容 [silk-v3-decoder](https://github.com/kn007/silk-v3-decoder) 的命令行参数。构建该项目的 `decoder`，并把绝对路径配置到 `VOICE_SILK_DECODER_PATH`。入站音频在服务内部转换为 PCM S16LE、16000 Hz、单声道；出站 MP3 由 SiliconFlow 直接生成，不需要 FFmpeg 或本地 SILK encoder。
+
+### 对话记忆持久化
+
+每个微信用户的最近 10 轮完整 LLM 对话会自动持久化到本地 JSON 文件，应用重启后自动恢复上下文。
+
+```bash
+AI_MEMORY_FILE=./data/conversation-memory.json   # 默认值，可自定义路径
+```
+
+**运维说明**：
+- 文件路径相对于 JVM 工作目录
+- 删除该文件即可清除所有用户的对话记忆
+- `data/` 目录已在 `.gitignore` 中，不会被提交
+- 每 100 个活跃用户约占用 1 MB 磁盘空间
+- 不支持多实例共享同一文件
 
 ## 运行
 
@@ -61,6 +95,19 @@ http://localhost:8080/bot
 ```bash
 mvn test
 ```
+
+## 持久化对话记忆
+
+LLM 会按微信用户保存最近 10 轮完整对话，文字和语音入口共用同一份记忆。默认文件是
+`./data/conversation-memory.json`，应用重启后会自动恢复。可通过环境变量修改路径：
+
+```text
+AI_MEMORY_FILE=E:/summer-projects/xialingying-data/conversation-memory.json
+```
+
+`data/` 已加入 `.gitignore`，不要提交其中的聊天内容。停止应用后删除记忆文件可清空所有用户历史；代码调用
+`AIService.clearHistory(userId)` 只清空指定用户。验证重启记忆时，先发送“我叫小明，请记住我的名字”，重启应用，
+再发送“我叫什么名字？”，回复应包含“小明”。
 
 新增测试覆盖：
 

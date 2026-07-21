@@ -4,6 +4,8 @@ import com.demo.demo.Service.AIService;
 import com.demo.demo.Service.BotService;
 import com.demo.demo.Service.ImageGenerationService;
 import com.demo.demo.Service.ImageRecognitionService;
+import com.demo.demo.Service.context.ContextManager;
+import com.demo.demo.Service.voice.VoiceMessageHandler;
 import com.demo.demo.Utils.WeatherUtil;
 import com.demo.demo.execption.BizException;
 import jakarta.annotation.PostConstruct;
@@ -14,7 +16,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -37,13 +41,21 @@ public class BotController {
     @Resource
     private ImageRecognitionService imageRecognitionService;
 
+    @Resource
+    private VoiceMessageHandler voiceMessageHandler;
+
+    @Resource
+    private ContextManager contextManager;
+
     // ==================== 初始化：设置自动回复 ====================
 
     @PostConstruct
     public void initAutoReply() {
         log.info("[BotController] 初始化自动回复处理器...");
         botService.setAutoReply((fromUser, contextToken, text) -> {
-            log.info("[自动回复] 收到消息 from={} contextToken={} text={}", fromUser, contextToken, text);
+            log.info("[自动回复] 收到消息 from={} contextToken={} textLength={}",
+                maskUserId(fromUser), maskToken(contextToken),
+                text == null ? 0 : text.length());
 
             // 图片生成优先级最高，避免“生成图片...”被普通聊天模型当成闲聊处理。
             if (imageGenerationService.isImageRequest(text)) {
@@ -60,7 +72,7 @@ public class BotController {
                     return sent ? null : "图片已生成，但发送失败了，请稍后再试";
                 } catch (Exception e) {
                     log.error("[自动回复] 图片生成失败", e);
-                    return "抱歉，图片生成失败了：" + e.getMessage();
+                    return "抱歉，图片生成失败了，请稍后再试";
                 }
             }
 
@@ -102,8 +114,9 @@ public class BotController {
                 if (reply != null) return reply;
             }
 
-            // -- 普通对话，直接丢给 AI --
-            String aiReply = aiService.chat(fromUser, text);
+            // -- 普通对话 + Function Calling（兜底） --
+            // 使用 chatWithTools 让 LLM 自行决定是否调用工具（天气/时间等）
+            String aiReply = aiService.chatWithTools(fromUser, text);
             if (aiReply != null) return aiReply;
 
             return "（AI 暂时无响应，请稍后再试）";
@@ -112,12 +125,18 @@ public class BotController {
         // 图片消息不进入普通文本对话，单独交给视觉模型识别后回复。
         botService.setImageReply((fromUser, contextToken, imageBytes) -> {
             log.info("[自动回复] 收到图片 from={} contextToken={} size={} bytes",
-                    fromUser, contextToken, imageBytes == null ? 0 : imageBytes.length);
+                    maskUserId(fromUser), maskToken(contextToken),
+                    imageBytes == null ? 0 : imageBytes.length);
             if (!imageRecognitionService.isConfigured()) {
                 return "图片识别未配置，请管理员设置 VISION_API_KEY 或 IMAGE_API_KEY";
             }
-            return imageRecognitionService.recognize(imageBytes);
+            String description = imageRecognitionService.recognize(imageBytes);
+            if (description != null && !description.isBlank()) {
+                contextManager.recordImage(fromUser, description.trim());
+            }
+            return description;
         });
+        botService.setVoiceMessageHandler(voiceMessageHandler);
         log.info("[BotController] 自动回复处理器初始化完成");
     }
 
@@ -149,20 +168,29 @@ public class BotController {
     @ResponseBody
     public Map<String, Object> messages() {
         Map<String, Object> map = new HashMap<>();
-        map.put("messages", botService.pollMessages());
+        List<Map<String, Object>> safeMessages = new ArrayList<>();
+        for (BotService.Msg msg : botService.pollMessages()) {
+            Map<String, Object> safeMessage = new HashMap<>();
+            safeMessage.put("fromUser", msg.fromUser);
+            safeMessage.put("replyId", msg.replyId);
+            safeMessage.put("content", msg.content);
+            safeMessage.put("time", msg.time);
+            safeMessages.add(safeMessage);
+        }
+        map.put("messages", safeMessages);
         map.put("logs", botService.getLogs());
         return map;
     }
 
     @PostMapping("/send")
     @ResponseBody
-    public Map<String, Object> send(@RequestParam String toUserId,
-                                     @RequestParam String contextToken,
+    public Map<String, Object> send(@RequestParam String replyId,
                                      @RequestParam String text) {
-        log.info("[BotController] 手动发送消息 to={} text={}", toUserId, text);
-        botService.sendReply(toUserId, contextToken, text);
+        log.info("[BotController] 手动发送消息 replyId={} textLength={}",
+                replyId, text == null ? 0 : text.length());
+        boolean sent = botService.sendManualReply(replyId, text);
         Map<String, Object> map = new HashMap<>();
-        map.put("ok", true);
+        map.put("ok", sent);
         return map;
     }
 
@@ -201,5 +229,16 @@ public class BotController {
         }
 
         return before.isEmpty() ? null : before;
+    }
+
+    private static String maskToken(String token) {
+        if (token == null || token.isBlank()) return "null";
+        if (token.length() <= 8) return "***";
+        return token.substring(0, 4) + "..." + token.substring(token.length() - 4);
+    }
+
+    private static String maskUserId(String userId) {
+        if (userId == null || userId.length() < 9) return "***";
+        return userId.substring(0, 4) + "..." + userId.substring(userId.length() - 4);
     }
 }

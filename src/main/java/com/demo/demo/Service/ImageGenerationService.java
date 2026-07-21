@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -15,6 +16,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.net.Inet4Address;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -23,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+@Slf4j
 @Service
 public class ImageGenerationService {
 
@@ -33,8 +40,11 @@ public class ImageGenerationService {
             "^\\s*(?:请|请帮我|帮我)?(?:生成|制作|画)(?:一张|一个|个|张)?\\s*(.*)$",
             Pattern.CASE_INSENSITIVE);
     private static final int MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+    private static final int MAX_HTTP_ATTEMPTS = 3;
+    private static final long[] RETRY_DELAYS_MILLIS = {500L, 1000L};
 
     private final OkHttpClient httpClient;
+    private final OkHttpClient downloadHttpClient;
     private final Gson gson = new Gson();
     private final String apiKey;
     private final String apiUrl;
@@ -44,8 +54,8 @@ public class ImageGenerationService {
     @Autowired
     public ImageGenerationService(
             @Value("${ai.image.api.key:}") String apiKey,
-            @Value("${ai.image.api.url:https://api.openai.com}") String apiUrl,
-            @Value("${ai.image.model:gpt-image-1}") String model,
+            @Value("${ai.image.api.url:https://api.siliconflow.cn}") String apiUrl,
+            @Value("${ai.image.model:Kwai-Kolors/Kolors}") String model,
             @Value("${ai.image.size:1024x1024}") String size) {
         this(apiKey, apiUrl, model, size, new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
@@ -60,6 +70,10 @@ public class ImageGenerationService {
         this.model = model;
         this.size = size;
         this.httpClient = httpClient;
+        this.downloadHttpClient = httpClient.newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build();
     }
 
     public boolean isConfigured() {
@@ -123,37 +137,58 @@ public class ImageGenerationService {
                 .post(RequestBody.create(bodyJson, JSON))
                 .build();
 
-        try (Response response = httpClient.newCall(request).execute()) {
+        try (Response response = executeGenerationRequest(request)) {
             String body = response.body() == null ? "" : response.body().string();
             if (!response.isSuccessful()) {
-                throw new IOException("图片生成失败，HTTP " + response.code());
+                String traceId = response.header("x-siliconcloud-trace-id", "missing");
+                log.error("[图片生成] API 失败 httpStatus={} traceId={}",
+                        response.code(), traceId);
+                throw new IOException("图片生成服务暂时不可用，HTTP " + response.code());
             }
             return readImageBytes(body);
+        } catch (java.net.ConnectException e) {
+            throw new IOException("无法连接图片生成服务，请检查配置和网络");
+        } catch (java.net.SocketTimeoutException e) {
+            throw new IOException("图片生成服务响应超时，请稍后重试");
+        } catch (IOException e) {
+            throw e;
         }
     }
 
     private byte[] readImageBytes(String body) throws IOException {
         JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-        JsonArray data = root.getAsJsonArray("data");
-        if (data == null || data.size() == 0 || !data.get(0).isJsonObject()) {
+        JsonArray images = root.getAsJsonArray("data");
+        // SiliconFlow 返回 images，其他 OpenAI 兼容平台通常返回 data。
+        if (images == null || images.isEmpty()) {
+            images = root.getAsJsonArray("images");
+        }
+        if (images == null || images.size() == 0 || !images.get(0).isJsonObject()) {
+            log.error("[图片生成] 响应格式异常，缺少可用的图片数据");
             throw new IOException("图片生成响应为空");
         }
 
-        JsonObject first = data.get(0).getAsJsonObject();
+        JsonObject first = images.get(0).getAsJsonObject();
+
+        // 优先 b64_json（不需要额外下载，且通常质量更高）
         if (first.has("b64_json") && !first.get("b64_json").isJsonNull()) {
             byte[] bytes = Base64.getDecoder().decode(first.get("b64_json").getAsString());
             checkImageSize(bytes);
             return bytes;
         }
+
+        // url 字段——所有 URL 必须通过 validateDownloadUrl 校验
         if (first.has("url") && !first.get("url").isJsonNull()) {
             return downloadImage(first.get("url").getAsString());
         }
+
+        log.error("[图片生成] 响应缺少 b64_json/url");
         throw new IOException("图片生成响应缺少 b64_json/url");
     }
 
     private byte[] downloadImage(String url) throws IOException {
+        validateDownloadUrl(url);
         Request request = new Request.Builder().url(url).build();
-        try (Response response = httpClient.newCall(request).execute()) {
+        try (Response response = executeDownloadRequest(request)) {
             if (!response.isSuccessful()) {
                 throw new IOException("下载图片失败，HTTP " + response.code());
             }
@@ -161,6 +196,117 @@ public class ImageGenerationService {
             byte[] bytes = body == null ? new byte[0] : body.bytes();
             checkImageSize(bytes);
             return bytes;
+        }
+    }
+
+    private Response executeGenerationRequest(Request request) throws IOException {
+        for (int attempt = 1; attempt <= MAX_HTTP_ATTEMPTS; attempt++) {
+            // 生图 POST 的网络异常可能表示平台已经开始计费，保守策略下不自动重试 IOException。
+            Response response = httpClient.newCall(request).execute();
+            if (!isRetryableGenerationStatus(response.code()) || attempt == MAX_HTTP_ATTEMPTS) {
+                return response;
+            }
+
+            log.warn("[图片生成] HTTP {}，准备第 {} 次请求", response.code(), attempt + 1);
+            response.close();
+            waitBeforeRetry(attempt);
+        }
+        throw new IOException("图片生成请求未完成");
+    }
+
+    private Response executeDownloadRequest(Request request) throws IOException {
+        for (int attempt = 1; attempt <= MAX_HTTP_ATTEMPTS; attempt++) {
+            try {
+                Response response = downloadHttpClient.newCall(request).execute();
+                if (!isRetryableDownloadStatus(response.code()) || attempt == MAX_HTTP_ATTEMPTS) {
+                    return response;
+                }
+
+                log.warn("[图片下载] HTTP {}，准备第 {} 次请求", response.code(), attempt + 1);
+                response.close();
+            } catch (IOException e) {
+                if (attempt == MAX_HTTP_ATTEMPTS) {
+                    throw e;
+                }
+                log.warn("[图片下载] 网络异常，准备第 {} 次请求 type={}",
+                        attempt + 1, e.getClass().getSimpleName());
+            }
+            waitBeforeRetry(attempt);
+        }
+        throw new IOException("图片下载请求未完成");
+    }
+
+    private void validateDownloadUrl(String url) throws IOException {
+        URI uri;
+        try {
+            uri = new URI(url);
+        } catch (URISyntaxException e) {
+            throw new IOException("图片下载 URL 不合法", e);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme())) {
+            throw new IOException("图片下载 URL 必须使用 HTTPS");
+        }
+        if (uri.getUserInfo() != null) {
+            throw new IOException("图片下载 URL 不安全");
+        }
+
+        String host = uri.getHost();
+        if (host == null || host.isBlank()) {
+            throw new IOException("图片下载 URL 缺少主机");
+        }
+        for (InetAddress address : InetAddress.getAllByName(host)) {
+            if (isUnsafeAddress(address)) {
+                throw new IOException("图片下载 URL 不安全");
+            }
+        }
+    }
+
+    private boolean isUnsafeAddress(InetAddress address) {
+        if (address.isAnyLocalAddress()
+                || address.isLoopbackAddress()
+                || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress()
+                || address.isMulticastAddress()) {
+            return true;
+        }
+
+        byte[] bytes = address.getAddress();
+        if (address instanceof Inet4Address && bytes.length == 4) {
+            int first = bytes[0] & 0xff;
+            int second = bytes[1] & 0xff;
+            return first == 0
+                    || first == 10
+                    || first == 127
+                    || (first == 100 && second >= 64 && second <= 127)
+                    || (first == 169 && second == 254)
+                    || (first == 172 && second >= 16 && second <= 31)
+                    || (first == 192 && second == 168);
+        }
+        if (address instanceof Inet6Address && bytes.length == 16) {
+            int first = bytes[0] & 0xff;
+            return (first & 0xfe) == 0xfc;
+        }
+        return false;
+    }
+
+    private boolean isRetryableGenerationStatus(int statusCode) {
+        return statusCode == 429
+                || statusCode == 500
+                || statusCode == 502
+                || statusCode == 503
+                || statusCode == 504;
+    }
+
+    private boolean isRetryableDownloadStatus(int statusCode) {
+        return statusCode == 408 || isRetryableGenerationStatus(statusCode);
+    }
+
+    private void waitBeforeRetry(int completedAttempt) throws IOException {
+        try {
+            Thread.sleep(RETRY_DELAYS_MILLIS[completedAttempt - 1]);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("等待重试时被中断", e);
         }
     }
 

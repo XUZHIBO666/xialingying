@@ -118,7 +118,7 @@ public class WeatherUtil {
 
         // 调用 wttr.in JSON API
         String url = WTTR_API + "/" + trimmedCity + "?format=j1";
-        log.info("[天气查询] 请求 URL: {}", url);
+        log.info("[天气查询] 请求城市: {}", trimmedCity);
 
         String json;
         try {
@@ -145,7 +145,7 @@ public class WeatherUtil {
                     "天气数据格式异常", e);
         }
 
-        log.debug("[天气查询] API 返回数据: {}", json);
+        log.debug("[天气查询] API 返回数据长度 {}", json == null ? 0 : json.length());
 
         // 解析当前天气
         JsonArray conditions = root.getAsJsonArray("current_condition");
@@ -195,8 +195,8 @@ public class WeatherUtil {
                 humidity
         );
 
-        // 日志：记录响应结果
-        log.info("[天气查询] 查询成功，结果: {}", result);
+        // 日志：记录响应结果（只记录城市名，不记录完整天气数据）
+        log.info("[天气查询] 查询成功，城市: {}", trimmedCity);
 
         return result;
     }

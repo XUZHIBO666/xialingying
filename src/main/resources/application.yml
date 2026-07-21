@@ -17,6 +17,8 @@ spring:
     name: demo
 
 ai:
+  memory:
+    file: ${AI_MEMORY_FILE:./data/conversation-memory.json}
   api:
     key: ${AI_API_KEY:}
     url: https://api.deepseek.com
@@ -25,8 +27,8 @@ ai:
   image:
     api:
       key: ${IMAGE_API_KEY:}
-      url: ${IMAGE_API_URL:https://api.openai.com}
-    model: ${IMAGE_MODEL:gpt-image-1}
+      url: ${IMAGE_API_URL:https://api.siliconflow.cn}
+    model: ${IMAGE_MODEL:Kwai-Kolors/Kolors}
     size: ${IMAGE_SIZE:1024x1024}
   vision:
     api:
@@ -34,3 +36,19 @@ ai:
       url: ${VISION_API_URL:https://api.siliconflow.cn}
     model: ${VISION_MODEL:Qwen/Qwen3-VL-8B-Instruct}
     prompt: ${VISION_PROMPT:请用中文简洁描述这张图片的主要内容，如果图片中有文字也请读出来。}
+  voice:
+    asr:
+      api-key: ${VOICE_ASR_API_KEY:}
+      api-url: ${VOICE_ASR_API_URL:https://api.siliconflow.cn}
+      model: ${VOICE_ASR_MODEL:FunAudioLLM/SenseVoiceSmall}
+      timeout: ${VOICE_ASR_TIMEOUT:60s}
+    tts:
+      api-key: ${VOICE_TTS_API_KEY:${VOICE_ASR_API_KEY:}}
+      api-url: ${VOICE_TTS_API_URL:https://api.siliconflow.cn}
+      model: ${VOICE_TTS_MODEL:FunAudioLLM/CosyVoice2-0.5B}
+      voice: ${VOICE_TTS_VOICE:FunAudioLLM/CosyVoice2-0.5B:anna}
+      timeout: ${VOICE_TTS_TIMEOUT:60s}
+    audio:
+      silk-decoder-path: ${VOICE_SILK_DECODER_PATH:}
+      silk-encoder-path: ${VOICE_SILK_ENCODER_PATH:}
+      process-timeout: ${VOICE_AUDIO_PROCESS_TIMEOUT:30s}
