@@ -1,62 +1,51 @@
 package com.demo.demo.Service.tool;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * 测试 @Tool 注解的方法（Spring AI 方式，替代旧 Tool 接口）。
+ */
 class ToolRegistryTest {
 
     @Test
-    void discoversAllToolBeans() {
-        ToolRegistry registry = new ToolRegistry(
-                List.of(new WeatherTool(), new TimeTool()));
+    void weatherToolHasToolAnnotation() throws Exception {
+        WeatherTool tool = new WeatherTool();
+        // 直接调用方法验证
+        java.lang.reflect.Method method = WeatherTool.class.getMethod("getWeather", String.class);
+        assertNotNull(method);
 
-        assertEquals(2, registry.getAll().size());
-        assertFalse(registry.isEmpty());
+        // 验证 @Tool 注解存在
+        var toolAnnotation = method.getAnnotation(org.springframework.ai.tool.annotation.Tool.class);
+        assertNotNull(toolAnnotation);
+        assertTrue(toolAnnotation.description().contains("天气"));
     }
 
     @Test
-    void getByNameReturnsCorrectTool() {
-        ToolRegistry registry = new ToolRegistry(List.of(new WeatherTool()));
-
-        Tool tool = registry.get("get_weather");
-        assertNotNull(tool);
-        assertEquals("get_weather", tool.name());
-    }
-
-    @Test
-    void emptyRegistryIsEmpty() {
-        ToolRegistry registry = new ToolRegistry(List.of());
-        assertTrue(registry.isEmpty());
-    }
-
-    @Test
-    void toOpenAiToolsGeneratesCorrectFormat() {
-        ToolRegistry registry = new ToolRegistry(List.of(new TimeTool()));
-
-        JsonArray tools = registry.toOpenAiTools();
-        assertEquals(1, tools.size());
-
-        JsonObject first = tools.get(0).getAsJsonObject();
-        assertEquals("function", first.get("type").getAsString());
-
-        JsonObject func = first.getAsJsonObject("function");
-        assertEquals("get_current_time", func.get("name").getAsString());
-        assertTrue(func.get("description").getAsString().length() > 0);
-    }
-
-    @Test
-    void executeTimeToolReturnsFormattedTime() throws Exception {
-        ToolRegistry registry = new ToolRegistry(List.of(new TimeTool()));
-        String result = registry.get("get_current_time").execute(new JsonObject());
+    void timeToolReturnsFormattedTime() {
+        TimeTool tool = new TimeTool();
+        String result = tool.getCurrentTime();
         assertNotNull(result);
         assertTrue(result.contains("年"));
         assertTrue(result.contains("月"));
         assertTrue(result.contains("日"));
+    }
+
+    @Test
+    void timeToolHasToolAnnotation() throws Exception {
+        java.lang.reflect.Method method = TimeTool.class.getMethod("getCurrentTime");
+        var toolAnnotation = method.getAnnotation(org.springframework.ai.tool.annotation.Tool.class);
+        assertNotNull(toolAnnotation);
+        assertTrue(toolAnnotation.description().contains("时间"));
+    }
+
+    @Test
+    void imageGenerationToolHasToolAnnotation() throws Exception {
+        java.lang.reflect.Method method = ImageGenerationTool.class
+                .getMethod("generateImage", String.class);
+        var toolAnnotation = method.getAnnotation(org.springframework.ai.tool.annotation.Tool.class);
+        assertNotNull(toolAnnotation);
+        assertTrue(toolAnnotation.description().contains("图片"));
     }
 }

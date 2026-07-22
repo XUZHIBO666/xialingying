@@ -28,7 +28,11 @@ public class VoiceMessageService {
         this.contextManager = contextManager;
     }
 
-    public Result process(String userId, byte[] silkAudio) {
+    /**
+     * 语音识别：SILK 解码 + ASR 转文字。
+     * 只做识别，不处理 AI 对话、不生成图片、不做 TTS。
+     */
+    public Result recognize(String userId, byte[] silkAudio) {
         String recognizedText;
         try {
             byte[] pcm = audioCodecService.silkToPcm(silkAudio);
@@ -43,34 +47,36 @@ public class VoiceMessageService {
             return Result.textOnly(ASR_FAILURE_TEXT);
         }
 
-        String reply;
-        try {
-            reply = aiService.chatWithTools(userId, recognizedText);
-            if (reply == null || reply.isBlank()) {
-                return Result.textOnly(LLM_FAILURE_TEXT);
-            }
-            reply = reply.trim();
-        } catch (Exception e) {
-            log.warn("[语音处理] LLM 阶段失败: {}", e.getMessage());
-            return Result.textOnly(LLM_FAILURE_TEXT);
-        }
+        log.info("[语音处理] 识别结果: {}", recognizedText);
+        return Result.textOnly(recognizedText);
+    }
 
+    /** 文字转语音（供外部调用） */
+    public byte[] synthesizeReply(String text) {
+        if (text == null || text.isBlank()) return null;
         try {
-            byte[] replyMp3 = ttsService.synthesize(reply);
-            return new Result(reply, replyMp3);
+            return ttsService.synthesize(text);
         } catch (Exception e) {
-            log.warn("[语音处理] TTS 失败，降级文字回复: {}", e.getMessage());
-            return Result.textOnly(reply);
+            log.warn("[语音处理] TTS 失败: {}", e.getMessage());
+            return null;
         }
     }
 
-    public record Result(String text, byte[] mp3Audio) {
+    public record Result(String text, byte[] mp3Audio, byte[] imageBytes) {
+        public Result(String text, byte[] mp3Audio) {
+            this(text, mp3Audio, null);
+        }
+
         public static Result textOnly(String text) {
-            return new Result(text, null);
+            return new Result(text, null, null);
         }
 
         public boolean hasMp3() {
             return mp3Audio != null && mp3Audio.length > 0;
+        }
+
+        public boolean hasImage() {
+            return imageBytes != null && imageBytes.length > 0;
         }
     }
 }

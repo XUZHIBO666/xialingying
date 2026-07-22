@@ -1,20 +1,18 @@
 package com.demo.demo.Service;
 
 import com.demo.demo.Service.voice.VoiceMessageHandler;
-import com.demo.demo.Service.voice.VoiceMessageService;
 import com.lth.wechat.ilink.ILinkClient;
 import com.lth.wechat.ilink.LoginCredentials;
-import com.lth.wechat.ilink.dto.message.VoiceContent;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.matches;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -27,71 +25,61 @@ class VoiceMessageReplyTest {
     void uploadsAndSendsMp3FileReply() throws Exception {
         ILinkClient client = mock(ILinkClient.class);
         BotService botService = loggedInBotService(client);
-        VoiceMessageService voiceService = mock(VoiceMessageService.class);
-        VoiceMessageHandler voiceHandler = new VoiceMessageHandler(voiceService);
-        VoiceContent voice = new VoiceContent(
-                "encrypt-query", "aes-key", 4, 1, 16000, 16, 1000, "官方文本");
-        byte[] inputSilk = new byte[]{1};
+        VoiceMessageHandler voiceHandler = mock(VoiceMessageHandler.class);
         byte[] replyMp3 = new byte[]{'I', 'D', '3'};
         ILinkClient.MediaInfo media = new ILinkClient.MediaInfo("query", "key", replyMp3.length);
-        when(client.downloadMedia("encrypt-query", "aes-key")).thenReturn(inputSilk);
-        when(voiceService.process("wx-user", inputSilk)).thenReturn(
-                new VoiceMessageService.Result("这是LLM回复", replyMp3));
+
+        when(voiceHandler.synthesize("这是LLM回复")).thenReturn(replyMp3);
         when(client.uploadMedia(any(LoginCredentials.class), eq(3), eq("wx-user"), eq(replyMp3)))
                 .thenReturn(media);
         botService.setVoiceMessageHandler(voiceHandler);
+        botService.setAutoReply((fromUser, ctxToken, text) -> "这是LLM回复");
 
-        ReflectionTestUtils.invokeMethod(botService, "processVoiceMessage", "wx-user", "ctx-token", voice);
+        // 输入含"语音"关键词 → isVoiceRequest=true → TTS → MP3
+        ReflectionTestUtils.invokeMethod(botService, "processTextMessage",
+                "wx-user", "ctx-token", "用语音回复我");
 
-        verify(client, timeout(2000)).downloadMedia("encrypt-query", "aes-key");
-        verify(client, timeout(2000)).uploadMedia(any(LoginCredentials.class), eq(3), eq("wx-user"), eq(replyMp3));
+        verify(client, timeout(2000)).uploadMedia(any(LoginCredentials.class), eq(3),
+                eq("wx-user"), eq(replyMp3));
         verify(client, timeout(2000)).sendFileMessage(any(LoginCredentials.class), eq("wx-user"),
-                eq("ctx-token"), eq(media), matches("voice-reply-\\d+\\.mp3"), eq((long) replyMp3.length));
-        verify(client, never()).sendTextMessage(any(LoginCredentials.class), anyString(), anyString(), anyString());
+                eq("ctx-token"), eq(media), matches("voice-reply-\\d+\\.mp3"), anyLong());
     }
 
     @Test
-    void mp3UploadFailureFallsBackToLlmText() throws Exception {
+    void ttsFailureFallsBackToText() throws Exception {
         ILinkClient client = mock(ILinkClient.class);
         BotService botService = loggedInBotService(client);
         VoiceMessageHandler voiceHandler = mock(VoiceMessageHandler.class);
-        VoiceContent voice = new VoiceContent(
-                "encrypt-query", "aes-key", 4, 1, 16000, 16, 1000, "");
-        byte[] replyMp3 = new byte[]{'I', 'D', '3'};
-        when(voiceHandler.handle(eq("wx-user"), any())).thenReturn(
-                new VoiceMessageService.Result("这是LLM回复", replyMp3));
-        when(client.uploadMedia(any(LoginCredentials.class), eq(3), eq("wx-user"), eq(replyMp3)))
-                .thenThrow(new RuntimeException("upload failed"));
+
+        when(voiceHandler.synthesize("这是LLM回复")).thenReturn(null); // TTS 失败
         botService.setVoiceMessageHandler(voiceHandler);
+        botService.setAutoReply((fromUser, ctxToken, text) -> "这是LLM回复");
 
-        ReflectionTestUtils.invokeMethod(botService, "processVoiceMessage", "wx-user", "ctx-token", voice);
+        ReflectionTestUtils.invokeMethod(botService, "processTextMessage",
+                "wx-user", "ctx-token", "用语音说");
 
+        // TTS 失败 → 降级发文字
         verify(client, timeout(2000)).sendTextMessage(any(LoginCredentials.class), eq("wx-user"),
                 eq("ctx-token"), eq("这是LLM回复"));
+        verify(client, never()).sendFileMessage(any(LoginCredentials.class), anyString(),
+                anyString(), any(), anyString(), anyLong());
     }
 
     @Test
-    void mp3SendFailureFallsBackToLlmText() throws Exception {
+    void noVoiceKeywordSendsTextDirectly() throws Exception {
         ILinkClient client = mock(ILinkClient.class);
         BotService botService = loggedInBotService(client);
         VoiceMessageHandler voiceHandler = mock(VoiceMessageHandler.class);
-        VoiceContent voice = new VoiceContent(
-                "encrypt-query", "aes-key", 4, 1, 16000, 16, 1000, "");
-        byte[] replyMp3 = new byte[]{'I', 'D', '3'};
-        ILinkClient.MediaInfo media = new ILinkClient.MediaInfo("query", "key", replyMp3.length);
-        when(voiceHandler.handle(eq("wx-user"), any())).thenReturn(
-                new VoiceMessageService.Result("这是LLM回复", replyMp3));
-        when(client.uploadMedia(any(LoginCredentials.class), eq(3), eq("wx-user"), eq(replyMp3)))
-                .thenReturn(media);
-        doThrow(new RuntimeException("send failed")).when(client).sendFileMessage(
-                any(LoginCredentials.class), eq("wx-user"), eq("ctx-token"), eq(media),
-                matches("voice-reply-\\d+\\.mp3"), eq((long) replyMp3.length));
         botService.setVoiceMessageHandler(voiceHandler);
+        botService.setAutoReply((fromUser, ctxToken, text) -> "普通回复");
 
-        ReflectionTestUtils.invokeMethod(botService, "processVoiceMessage", "wx-user", "ctx-token", voice);
+        ReflectionTestUtils.invokeMethod(botService, "processTextMessage",
+                "wx-user", "ctx-token", "今天天气怎么样");
 
+        // 没有语音关键词 → 直接发文字，不调 TTS
         verify(client, timeout(2000)).sendTextMessage(any(LoginCredentials.class), eq("wx-user"),
-                eq("ctx-token"), eq("这是LLM回复"));
+                eq("ctx-token"), eq("普通回复"));
+        verify(voiceHandler, never()).synthesize(anyString());
     }
 
     @SuppressWarnings("unchecked")

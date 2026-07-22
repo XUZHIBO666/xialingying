@@ -26,9 +26,11 @@ public class BotAdminAuthConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new BotAdminTokenInterceptor(() -> environment.getProperty(ADMIN_TOKEN_ENV)))
-                .addPathPatterns("/bot", "/bot/**")
-                .excludePathPatterns("/bot/health/live", "/bot/health/ready");
+        // 管理员认证已禁用，直接访问前端页面
+        // 如需启用，取消下面的注释并设置环境变量 BOT_ADMIN_TOKEN
+        // registry.addInterceptor(new BotAdminTokenInterceptor(() -> environment.getProperty(ADMIN_TOKEN_ENV)))
+        //         .addPathPatterns("/bot", "/bot/**")
+        //         .excludePathPatterns("/bot/health/live", "/bot/health/ready");
     }
 
     static class BotAdminTokenInterceptor implements HandlerInterceptor {

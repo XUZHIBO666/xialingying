@@ -14,7 +14,13 @@ public class VoiceMessageHandler {
         this.voiceMessageService = voiceMessageService;
     }
 
-    public VoiceMessageService.Result handle(String userId, Supplier<byte[]> downloader) throws IOException {
-        return voiceMessageService.process(userId, downloader.get());
+    /** 语音识别：下载 → SILK解码 → ASR → 返回识别文字 */
+    public VoiceMessageService.Result recognize(String userId, Supplier<byte[]> downloader) throws IOException {
+        return voiceMessageService.recognize(userId, downloader.get());
+    }
+
+    /** TTS 合成 */
+    public byte[] synthesize(String text) {
+        return voiceMessageService.synthesizeReply(text);
     }
 }

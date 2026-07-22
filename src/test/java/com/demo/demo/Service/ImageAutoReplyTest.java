@@ -104,8 +104,9 @@ class ImageAutoReplyTest {
         byte[] imageBytes = "image-bytes".getBytes();
         ILinkClient.MediaInfo media = new ILinkClient.MediaInfo("query", "aes-key", imageBytes.length);
 
-        when(imageService.isImageRequest("生成图片：星空")).thenReturn(true);
-        when(imageService.extractPrompt("生成图片：星空")).thenReturn("星空");
+        // 新 BotController 使用 AI 意图判断：AI 返回 YES|提示词
+        when(aiService.isConfigured()).thenReturn(true);
+        when(aiService.chat(contains("_img_intent"), anyString())).thenReturn("YES|星空");
         when(imageService.isConfigured()).thenReturn(true);
         when(imageService.generateImage("星空")).thenReturn(imageBytes);
         when(client.uploadMedia(any(LoginCredentials.class), eq(1), eq("wx-user"), eq(imageBytes))).thenReturn(media);
@@ -120,7 +121,6 @@ class ImageAutoReplyTest {
         verify(client, timeout(1000))
                 .sendImageMessage(any(LoginCredentials.class), eq("wx-user"), eq("ctx-token"), eq(media));
         verify(client, never()).sendTextMessage(any(LoginCredentials.class), anyString(), anyString(), anyString());
-        verifyNoInteractions(aiService);
     }
 
     @Test
@@ -131,9 +131,9 @@ class ImageAutoReplyTest {
         ImageGenerationService imageService = mock(ImageGenerationService.class);
         ImageRecognitionService recognitionService = mock(ImageRecognitionService.class);
 
-        when(imageService.isImageRequest("画一张海边日落")).thenReturn(true);
-        when(imageService.extractPrompt("画一张海边日落")).thenReturn("海边日落");
+        // 新 BotController：图片生成未配置时跳过图片块，voice 和 AI 也未配置 → "AI 未配置"
         when(imageService.isConfigured()).thenReturn(false);
+        when(aiService.isConfigured()).thenReturn(false);
 
         BotController controller = controller(botService, aiService, imageService, recognitionService);
         controller.initAutoReply();
@@ -141,10 +141,9 @@ class ImageAutoReplyTest {
         botService.processTextMessage("wx-user", "ctx-token", "画一张海边日落");
 
         verify(client, timeout(1000)).sendTextMessage(any(LoginCredentials.class), eq("wx-user"), eq("ctx-token"),
-                eq("图片生成未配置，请管理员设置 IMAGE_API_KEY"));
+                eq("AI 未配置，请联系管理员"));
         verify(client, never()).uploadMedia(any(LoginCredentials.class), anyInt(), anyString(), any(byte[].class));
         verify(client, never()).sendImageMessage(any(LoginCredentials.class), anyString(), anyString(), any());
-        verifyNoInteractions(aiService);
     }
 
     @Test

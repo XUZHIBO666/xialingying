@@ -417,41 +417,103 @@ public class BotService {
     }
 
     private void processVoiceMessage(String fromUser, String contextToken, VoiceContent voice) {
-        VoiceMessageHandler handler = voiceMessageHandler;
-        if (voice == null || handler == null) {
+        VoiceMessageHandler voiceHandler = voiceMessageHandler;
+        if (voice == null || voiceHandler == null) {
             sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
             return;
         }
 
         submitReplyTask(fromUser, contextToken, () -> {
             long totalStart = System.nanoTime();
-            FutureTask<VoiceMessageService.Result> task = new FutureTask<>(
-                    () -> handler.handle(fromUser, () -> client.downloadMedia(
-                            voice.getEncryptQueryParam(), voice.getAesKey())));
-            Thread.ofVirtual()
-                    .name("voice-process-" + VOICE_THREAD_SEQUENCE.incrementAndGet())
-                    .start(task);
+
+            // 1. 下载语音 + ASR 识别
+            VoiceMessageService.Result asrResult;
             try {
-                VoiceMessageService.Result result = task.get();
-                messages.add(new Msg(fromUser, rememberReplyTarget(fromUser, contextToken),
-                        "[语音] " + result.text()));
-                displayLog(fromUser + ": [语音]");
-                boolean mp3ReplySent = result.hasMp3() && sendMp3Reply(fromUser, contextToken,
-                        result.mp3Audio());
-                if (!mp3ReplySent) {
-                    sendReply(fromUser, contextToken, result.text());
-                }
-                log.info("[语音处理] from={} mp3Reply={} totalMs={}", maskUserId(fromUser), mp3ReplySent,
-                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.warn("[语音处理] 任务被中断 from={}", maskUserId(fromUser));
-                sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
+                asrResult = voiceHandler.recognize(fromUser,
+                        () -> client.downloadMedia(voice.getEncryptQueryParam(), voice.getAesKey()));
             } catch (Exception e) {
-                log.error("[语音处理] 处理失败 from={} error={}", maskUserId(fromUser), e.getMessage(), e);
+                log.error("[语音处理] 下载/ASR 失败 from={} error={}",
+                        maskUserId(fromUser), e.getMessage(), e);
                 sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
+                return;
+            }
+
+            String recognizedText = asrResult.text();
+            if (recognizedText == null || recognizedText.isBlank()
+                    || recognizedText.equals(VoiceMessageService.ASR_FAILURE_TEXT)) {
+                sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
+                return;
+            }
+
+            messages.add(new Msg(fromUser, rememberReplyTarget(fromUser, contextToken),
+                    "[语音] " + recognizedText));
+            displayLog(fromUser + ": [语音] " + recognizedText);
+
+            // 2. 走 autoReplyHandler（和文本消息同一条路）
+            ReplyHandler replyHandler = autoReplyHandler;
+            if (replyHandler == null) {
+                sendReply(fromUser, contextToken, VoiceMessageService.LLM_FAILURE_TEXT);
+                return;
+            }
+
+            String reply;
+            try {
+                reply = replyHandler.onMessage(fromUser, contextToken, recognizedText);
+            } catch (Exception e) {
+                log.error("[语音处理] autoReply 异常 from={} error={}",
+                        maskUserId(fromUser), e.getMessage(), e);
+                sendReply(fromUser, contextToken, VoiceMessageService.LLM_FAILURE_TEXT);
+                return;
+            }
+
+            // autoReplyHandler 返回 null 说明图片等已直接发送，不需要额外回复
+            if (reply == null || reply.isEmpty()) {
+                log.info("[语音处理] from={} 媒体已发送（图片等） totalMs={}",
+                        maskUserId(fromUser),
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
+                return;
+            }
+
+            // 3. 判断用户是否明确要求语音回复
+            boolean userWantsVoice = isVoiceRequest(recognizedText);
+
+            if (userWantsVoice) {
+                // 用户想要语音 → TTS 成功只发语音，失败降级文字
+                byte[] replyMp3 = voiceHandler.synthesize(reply);
+                if (replyMp3 != null) {
+                    sendVoiceReply(fromUser, contextToken, replyMp3);
+                    log.info("[语音处理] from={} voiceReply=true totalMs={}",
+                            maskUserId(fromUser),
+                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
+                } else {
+                    sendReply(fromUser, contextToken, reply);
+                    log.info("[语音处理] from={} voiceReply=false（降级文字） totalMs={}",
+                            maskUserId(fromUser),
+                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
+                }
+            } else {
+                // 默认文字回复
+                sendReply(fromUser, contextToken, reply);
+                log.info("[语音处理] from={} textReply=true totalMs={}",
+                        maskUserId(fromUser),
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - totalStart));
             }
         });
+    }
+
+    /** 判断用户是否明确要求语音回复 */
+    private boolean isVoiceRequest(String text) {
+        if (text == null) return false;
+        // 匹配语音/朗读/讲述相关的关键词（参考 others/BotController 的 AI 意图判断逻辑）
+        return text.contains("语音") || text.contains("朗读") || text.contains("读出来")
+                || text.contains("读一下") || text.contains("讲给我听") || text.contains("念出来")
+                || text.contains("念一下") || text.contains("说出来") || text.contains("播报")
+                || text.contains("用声音") || text.contains("讲一段") || text.contains("讲个故事")
+                || text.contains("用语音说") || text.contains("用语音回复") || text.contains("用说的")
+                || text.contains("发语音") || text.contains("发段语音") || text.contains("说给我听")
+                || text.contains("念给我听") || text.contains("讲出来") || text.contains("说一段")
+                || text.contains("音频") || text.contains("声音回复") || text.contains("语音回复")
+                || text.contains("讲一讲") || text.contains("给我讲") || text.contains("给我念");
     }
 
     private void runAutoReply(String fromUser, String contextToken, String text) {
@@ -462,6 +524,20 @@ public class BotService {
         try {
             String reply = handler.onMessage(fromUser, contextToken, text);
             if (reply != null && !reply.isEmpty()) {
+                // 用户要求语音回复 → TTS 合成 → 发送 MP3，失败则降级文字
+                if (isVoiceRequest(text)) {
+                    VoiceMessageHandler vh = voiceMessageHandler;
+                    if (vh != null) {
+                        byte[] mp3 = vh.synthesize(reply);
+                        if (mp3 != null && sendVoiceReply(fromUser, contextToken, mp3)) {
+                            log.info("[iLink] 语音回复成功 from={} mp3Bytes={}",
+                                    maskUserId(fromUser), mp3.length);
+                            return;
+                        }
+                        log.info("[iLink] TTS/语音发送失败，降级为文字回复 from={}",
+                                maskUserId(fromUser));
+                    }
+                }
                 sendReply(fromUser, contextToken, reply);
             }
         } catch (Exception e) {
@@ -575,7 +651,8 @@ public class BotService {
         }
     }
 
-    private boolean sendMp3Reply(String toUserId, String contextToken, byte[] mp3Audio) {
+    /** 发送语音回复（MP3 文件形式） */
+    public boolean sendVoiceReply(String toUserId, String contextToken, byte[] mp3Audio) {
         if (!loggedIn || mp3Audio == null || mp3Audio.length == 0) {
             return false;
         }
@@ -584,12 +661,12 @@ public class BotService {
             String fileName = "voice-reply-" + System.currentTimeMillis() + ".mp3";
             client.sendFileMessage(credentials.get(), toUserId, contextToken, media,
                     fileName, mp3Audio.length);
-            log.info("[iLink] MP3 文件发送成功 to={} mp3Bytes={}",
+            log.info("[iLink] MP3 语音发送成功 to={} mp3Bytes={}",
                     maskUserId(toUserId), mp3Audio.length);
-            displayLog("MP3 回复 -> " + toUserId + " (" + mp3Audio.length + " bytes)");
+            displayLog("语音回复 -> " + toUserId + " (" + mp3Audio.length + " bytes)");
             return true;
         } catch (Exception e) {
-            log.error("[iLink] MP3 文件发送失败 to={} error={}",
+            log.error("[iLink] MP3 语音发送失败 to={} error={}",
                     maskUserId(toUserId), e.getMessage(), e);
             return false;
         }
