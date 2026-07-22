@@ -17,19 +17,12 @@ spring:
     active: local
   application:
     name: demo
-  autoconfigure:
-    exclude:
-      # DashScopeChatModel 是百炼专用协议，DeepSeek 用 OpenAI 兼容的 ChatModel
-      - com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeChatAutoConfiguration
   ai:
     dashscope:
       api-key: ${AI_API_KEY:${ai.api.key:sk-placeholder}}
-    openai:
-      api-key: ${AI_API_KEY:${ai.api.key:sk-placeholder}}
-      base-url: ${AI_BASE_URL:https://api.deepseek.com}
       chat:
         options:
-          model: ${AI_MODEL:deepseek-chat}
+          model: ${AI_MODEL:qwen-max}
 
 ai:
   memory:
