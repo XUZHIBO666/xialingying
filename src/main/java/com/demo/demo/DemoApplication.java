@@ -8,7 +8,7 @@ import org.springframework.context.event.EventListener;
 
 @Slf4j
 @SpringBootApplication
-public class DemoApplication {
+public class  DemoApplication {
 
     public static void main(String[] args) {
         log.info("========================================");
