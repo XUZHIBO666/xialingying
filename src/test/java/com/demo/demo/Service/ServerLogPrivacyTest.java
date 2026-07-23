@@ -26,7 +26,9 @@ class ServerLogPrivacyTest {
                 source("Service/voice/SiliconFlowTtsService.java"),
                 source("Service/voice/VoiceMessageService.java"),
                 source("Service/voice/VoiceMessageHandler.java"),
-                source("Utils/WeatherUtil.java"),
+                source("Service/weather/OpenMeteoWeatherProvider.java"),
+                source("Service/weather/WeatherService.java"),
+                source("Service/tool/WeatherTool.java"),
                 source("controller/BotController.java"),
                 source("controller/WeatherController.java"),
                 source("execption/GlobalExpectionHandler.java"));
@@ -40,6 +42,10 @@ class ServerLogPrivacyTest {
         assertFalse(serverLogs.contains("请求 URL: {}"));
         // getRequestURI() 只包含路径；完整 URL 才可能泄露主机与查询参数。
         assertFalse(serverLogs.contains("request.getRequestURL()"));
+        // 不含 Open-Meteo 请求参数或响应正文
+        assertFalse(serverLogs.contains("requestedLocation"));
+        assertFalse(serverLogs.contains("response.body().string()"));
+        assertFalse(serverLogs.contains("request.url()"));
     }
 
     @Test

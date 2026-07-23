@@ -112,15 +112,15 @@ public class OpenMeteoWeatherProvider implements WeatherProvider {
                 }
             }
             if (ambiguous) {
-                log.warn("[Open-Meteo] Ambiguous location '{}', elapsed={}ms",
-                        requestedLocation, System.currentTimeMillis() - start);
+                log.warn("[Open-Meteo] Ambiguous location, elapsed={}ms",
+                        System.currentTimeMillis() - start);
                 throw new WeatherException(WeatherError.LOCATION_AMBIGUOUS,
                         "城市「" + requestedLocation + "」不明确，请补充省份或国家");
             }
         }
 
-        log.debug("[Open-Meteo] Location resolved: {} -> {}/{}/{}",
-                requestedLocation, name, adminArea, country);
+        log.debug("[Open-Meteo] Location resolved: elapsed={}ms",
+                System.currentTimeMillis() - start);
 
         return new WeatherLocation(requestedLocation, name, adminArea, country,
                 lat, lon, zoneId);

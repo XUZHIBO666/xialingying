@@ -71,7 +71,7 @@ public class WeatherService {
         // 1. Resolve (or cached) location
         String locationKey = normalizeLocationKey(query.location());
         WeatherLocation location = locationCache.get(locationKey, k -> {
-            log.debug("[WeatherService] Resolving location: {}", query.location());
+            log.debug("[WeatherService] Resolving location");
             return provider.resolveLocation(query.location());
         });
 
