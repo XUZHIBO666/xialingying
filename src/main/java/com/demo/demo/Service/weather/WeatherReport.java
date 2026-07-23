@@ -1,5 +1,6 @@
 package com.demo.demo.Service.weather;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.time.Instant;
@@ -14,7 +15,7 @@ import java.time.LocalDate;
 public record WeatherReport(
         WeatherReportType type,
         WeatherLocation location,
-        LocalDate targetDate,
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd") LocalDate targetDate,
         Instant observedAt,
         CurrentConditions current,
         DailyForecast forecast,
