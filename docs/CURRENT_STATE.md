@@ -171,26 +171,44 @@ BotService.startListening()
 
 ## 7. 天气功能
 
-天气已经接入微信文本消息链：
+天气已重构为模块化架构，通过 ReactAgent Tool Calling 和 REST API 两个入口共享 `WeatherService`：
 
 ```text
-BotController.initAutoReply()
-→ text.contains("天气")
-→ BotController.extractCity()
-→ WeatherUtil.getWeather()
-→ AIService.chat() 润色
-→ BotService.sendReply()
+WeChat/ASR → AIService / ReactAgent
+             → LLM 产生 query_weather Tool Call
+             → WeatherTool (适配器)
+             → WeatherService (应用服务：日期解析 + 缓存)
+             → OpenMeteoWeatherProvider (供应商适配器)
+             → Open-Meteo API
+
+REST API:
+HTTP Request → WeatherController (适配器)
+             → WeatherService
+             → OpenMeteoWeatherProvider
+             → Open-Meteo API
 ```
 
-它是关键词路由，不是 Agent、Tool Registry 或 Function Calling。由于 `AIService.isConfigured()` 检查位于天气分支之前，没有文本 LLM 配置时，微信天气也不会执行。
+**关键特性：**
+- 供应商：Open-Meteo（免费，无需 API Key），已废弃 wttr.in
+- 能力：当前天气 + 未来三天逐日预报（今天/明天/后天）
+- 路由：BotController 不再包含天气关键词路由和 extractCity()，所有天气请求统一由 ReactAgent 处理
+- 结构化返回：WeatherTool 返回 WeatherToolResult（含机器可读的 7 种状态码）
+- 缓存：Caffeine 进程内缓存（地点 24h / 当前天气 10min / 预报 60min）
+- 批量查询上限：10 个城市
+- 测试：43 个确定性单元测试，不依赖公网
 
-天气还提供 REST 入口：
+**领域模型：**
+- `WeatherQuery` / `WeatherLocation` / `WeatherReport` / `CurrentConditions` / `DailyForecast`
+- `WeatherError`（7 种稳定分类）/ `WeatherException`
+- `WeatherProvider` 接口 + `OpenMeteoWeatherProvider` 实现
 
-- `WeatherController.getWeather()`
-- `WeatherController.getWeatherByPath()`
-- `WeatherController.batchQuery()`
+**文件位置：**
+- 领域与配置：`Service/weather/`（12 个文件）
+- Tool 适配器：`Service/tool/WeatherTool.java` + `WeatherToolResult.java`
+- REST：`controller/WeatherController.java` + `controller/dto/`（3 个 DTO）
+- 已删除：`Utils/WeatherUtil.java`、`Service/tool/Tool.java`、`Service/tool/ToolRegistry.java`
 
-`WeatherUtilTest` 18 项和 `WeatherStabilityTest` 7 项均通过，并实际访问 `wttr.in`。这验证了底层查询和解析，不等于 WeatherController HTTP 或微信天气端到端验证。
+weather-cli 目录仍为独立项目，不共享主项目代码。
 
 ## 8. 模型基线
 
@@ -332,12 +350,17 @@ mvn test
 | `XialingyingApplicationTests` | 1 | 重复的 Spring 上下文 |
 | `GlobalExceptionHandlerTest` | 13 | 单元测试 |
 | `ImageAutoReplyTest` | 7 | Mockito 消息链路测试 |
-| `ImageGenerationServiceTest` | 12 | 本地 HTTP Server 组件测试 |
-| `ImageRecognitionServiceTest` | 20 | 本地 HTTP Server 组件测试 |
-| `WeatherStabilityTest` | 7 | 真实网络/并发测试 |
-| `WeatherUtilTest` | 18 | 真实天气服务集成测试 |
+| `WeatherDomainTest` | 3 | 领域模型契约测试 |
+| `OpenMeteoWeatherProviderTest` | 7 | MockWebServer 供应商测试 |
+| `WeatherServiceTest` | 10 | Fake Provider 服务层测试 |
+| `WeatherToolTest` | 10 | Mock 工具适配器测试 |
+| `ToolAnnotationTest` | 4 | @Tool 注解验证 |
+| `WeatherControllerTest` | 8 | MockMvc REST 测试 |
+| `WeatherAgentRoutingTest` | 3 | Mock 路由回归测试 |
+| `ServerLogPrivacyTest` | 2 | 日志隐私审计 |
+| 其他（预存在） | 多种 | 图片生成/识别/语音等 |
 
-没有自动覆盖：`AIService`、真实 iLink 扫码/收发、会话过期、去重、同用户顺序、语音正式链、WeatherController HTTP、微信天气端到端、Bot 页面安全。
+天气测试全部为确定性单元测试，不依赖公网。REST、Tool、Agent 路由均有覆盖。
 
 ## 14. 当前问题优先级
 
@@ -358,7 +381,7 @@ mvn test
 2. `AIService`、真实 iLink、重连和关闭缺少自动测试。
 3. 文本 LLM 错误未区分认证、限流、超时和空响应。
 4. 真实图片平台与微信发送没有端到端测试。
-5. WeatherController 和微信天气链路没有端到端测试。
+5. 真实 Open-Meteo 天气 API 手动验证待完成（自动化测试已全部使用 Mock）。
 6. 天气路由被文本 LLM 配置检查前置限制。
 7. Maven Wrapper 下载失败，干净环境构建未验证。
 8. Spring Boot 使用 `SNAPSHOT`。
@@ -370,7 +393,7 @@ mvn test
 ### P2：体验增强和扩展
 
 1. TTS 和语音回复。
-2. 天气/时间升级为受控 Tool 或 Function Calling。
+2. ~~天气/时间升级为受控 Tool 或 Function Calling。~~（已完成：天气已通过 ReactAgent Tool Calling）
 3. 历史持久化或用户可调用的历史清理。
 4. 包名、类名、目录命名规范化。
 5. 清理空类、演示 Controller 和重复上下文测试。
