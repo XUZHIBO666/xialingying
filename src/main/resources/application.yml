@@ -34,18 +34,16 @@ ai:
   system-prompt: 你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
   image:
     api:
-      key: ${IMAGE_API_KEY:}
-      url: ${IMAGE_API_URL:https://api.siliconflow.cn}
-    model: ${IMAGE_MODEL:Kwai-Kolors/Kolors}
+    model: ${IMAGE_MODEL:wanx2.0-t2i-turbo}
     size: ${IMAGE_SIZE:1024x1024}
   vision:
     api:
-      key: ${VISION_API_KEY:${IMAGE_API_KEY:}}
-      url: ${VISION_API_URL:https://api.siliconflow.cn}
-    model: ${VISION_MODEL:Qwen/Qwen3-VL-8B-Instruct}
+    model: ${VISION_MODEL:qwen-vl-max}
     prompt: ${VISION_PROMPT:请用中文简洁描述这张图片的主要内容，如果图片中有文字也请读出来。}
   voice:
     asr:
+      # SiliconFlow API Key（在 https://cloud.siliconflow.cn 获取，新用户送 2000 万 tokens）
+      # 设置后自动启用 ASR + TTS：export VOICE_ASR_API_KEY=sk-xxxxxxxx
       api-key: ${VOICE_ASR_API_KEY:}
       api-url: ${VOICE_ASR_API_URL:https://api.siliconflow.cn}
       model: ${VOICE_ASR_MODEL:FunAudioLLM/SenseVoiceSmall}

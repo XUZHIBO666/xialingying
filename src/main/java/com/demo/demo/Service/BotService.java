@@ -417,9 +417,23 @@ public class BotService {
     }
 
     private void processVoiceMessage(String fromUser, String contextToken, VoiceContent voice) {
+        if (voice == null) {
+            sendReply(fromUser, contextToken, "语音消息解析失败");
+            return;
+        }
+
+        // ---- 优先使用微信自带的语音识别结果（最快、最准、免 API 调用） ----
+        String wxText = voice.getText();
+        if (wxText != null && !wxText.isBlank()) {
+            log.info("[iLink] 微信已识别语音 from={} wxText={}", maskUserId(fromUser), wxText);
+            processTextMessage(fromUser, contextToken, wxText.trim());
+            return;
+        }
+
+        // ---- 微信无识别结果，降级到外部 ASR（下载 + SILK 解码 + API） ----
         VoiceMessageHandler voiceHandler = voiceMessageHandler;
-        if (voice == null || voiceHandler == null) {
-            sendReply(fromUser, contextToken, VoiceMessageService.ASR_FAILURE_TEXT);
+        if (voiceHandler == null) {
+            sendReply(fromUser, contextToken, "语音识别服务未配置");
             return;
         }
 

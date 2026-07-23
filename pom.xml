@@ -118,6 +118,18 @@
 			<artifactId>wechat-ilink-sdk</artifactId>
 			<version>1.0.1</version>
 		</dependency>
+		<!-- 七牛云 SDK（图片上传获取公网 URL，供百炼视觉 API 使用） -->
+		<dependency>
+			<groupId>com.qiniu</groupId>
+			<artifactId>qiniu-java-sdk</artifactId>
+			<version>7.14.0</version>
+		</dependency>
+		<!-- Spring AI OpenAI：兼容模式传图（OpenAiApi + OpenAiChatModel → 百炼 compatible-mode） -->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-openai</artifactId>
+			<version>1.1.2</version>
+		</dependency>
 		<!-- QR Code -->
 		<dependency>
 			<groupId>com.google.zxing</groupId>
@@ -136,6 +148,8 @@
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+
+
 	</dependencies>
 
 	<build>
