@@ -10,6 +10,7 @@ import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.demo.demo.Service.context.ContextManager;
+import com.demo.demo.Service.tool.EmailTool;
 import com.demo.demo.Service.tool.ImageGenerationTool;
 import com.demo.demo.Service.tool.TimeTool;
 import com.demo.demo.Service.tool.WeatherTool;
@@ -35,20 +36,17 @@ import java.util.concurrent.ConcurrentMap;
 @Slf4j
 @Service
 public class AIService {
-
     @Value("${spring.ai.dashscope.api-key:}")
     private String apiKey;
-
     @Value("${ai.system-prompt}")
     private String systemPrompt;
-
     private ReactAgent agent;
     private final MemorySaver memorySaver;
     private final ContextManager contextManager;
     private final WeatherTool weatherTool;
     private final TimeTool timeTool;
     private final ImageGenerationTool imageGenerationTool;
-
+    private final EmailTool emailTool;
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
 
@@ -56,12 +54,14 @@ public class AIService {
                      ContextManager contextManager,
                      WeatherTool weatherTool,
                      TimeTool timeTool,
-                     ImageGenerationTool imageGenerationTool) {
+                     ImageGenerationTool imageGenerationTool,
+                     EmailTool emailTool) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
         this.timeTool = timeTool;
         this.imageGenerationTool = imageGenerationTool;
+        this.emailTool = emailTool;
     }
 
     @PostConstruct
@@ -104,7 +104,7 @@ public class AIService {
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
-                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool))
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, emailTool))
                 .hooks(trimHook)
                 .build();
     }
@@ -155,7 +155,7 @@ public class AIService {
     /**
      * 带 Function Calling 能力的聊天，直接复用 chat()。
      * ReactAgent 已在构造时注册了 {@link WeatherTool}、{@link TimeTool}、
-     * {@link ImageGenerationTool}，调用时 LLM 自动决定是否触发工具。
+     * {@link ImageGenerationTool}、{@link EmailTool}，调用时 LLM 自动决定是否触发工具。
      */
     public String chatWithTools(String userId, String message) {
         return chat(userId, message);

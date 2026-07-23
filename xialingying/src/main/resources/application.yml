@@ -1,0 +1,65 @@
+server:
+  port: 8080
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.demo: DEBUG
+    com.xzb: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    path: ./logs
+
+spring:
+  profiles:
+    active: local
+  application:
+    name: demo
+  ai:
+    dashscope:
+      api-key: ${AI_API_KEY:${ai.api.key:sk-placeholder}}
+      chat:
+        options:
+          model: ${AI_MODEL:qwen-max}
+
+ai:
+  memory:
+    file: ${AI_MEMORY_FILE:./data/conversation-memory.json}
+  api:
+    key: ${AI_API_KEY:}
+    url: https://api.deepseek.com
+  model: deepseek-chat
+  system-prompt: 你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
+  image:
+    api:
+    model: ${IMAGE_MODEL:wanx2.0-t2i-turbo}
+    size: ${IMAGE_SIZE:1024x1024}
+  vision:
+    api:
+    model: ${VISION_MODEL:qwen-vl-max}
+    prompt: ${VISION_PROMPT:请用中文简洁描述这张图片的主要内容，如果图片中有文字也请读出来。}
+  voice:
+    asr:
+      # SiliconFlow API Key（在 https://cloud.siliconflow.cn 获取，新用户送 2000 万 tokens）
+      # 设置后自动启用 ASR + TTS：export VOICE_ASR_API_KEY=sk-xxxxxxxx
+      api-key: ${VOICE_ASR_API_KEY:}
+      api-url: ${VOICE_ASR_API_URL:https://api.siliconflow.cn}
+      model: ${VOICE_ASR_MODEL:FunAudioLLM/SenseVoiceSmall}
+      timeout: ${VOICE_ASR_TIMEOUT:60s}
+    tts:
+      api-key: ${VOICE_TTS_API_KEY:${VOICE_ASR_API_KEY:}}
+      api-url: ${VOICE_TTS_API_URL:https://api.siliconflow.cn}
+      model: ${VOICE_TTS_MODEL:FunAudioLLM/CosyVoice2-0.5B}
+      voice: ${VOICE_TTS_VOICE:FunAudioLLM/CosyVoice2-0.5B:anna}
+      timeout: ${VOICE_TTS_TIMEOUT:60s}
+    audio:
+      silk-decoder-path: ${VOICE_SILK_DECODER_PATH:}
+      silk-encoder-path: ${VOICE_SILK_ENCODER_PATH:}
+      process-timeout: ${VOICE_AUDIO_PROCESS_TIMEOUT:30s}
+  search:
+    baidu:
+      api-key: ${BAIDU_SEARCH_API_KEY:}
+      api-url: ${BAIDU_SEARCH_API_URL:https://qianfan.baidubce.com/v2/ai_search/web_search}
+      timeout: ${BAIDU_SEARCH_TIMEOUT:15s}
