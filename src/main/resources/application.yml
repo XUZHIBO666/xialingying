@@ -31,7 +31,7 @@ ai:
     key: ${AI_API_KEY:}
     url: https://api.deepseek.com
   model: deepseek-chat
-  system-prompt: 你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
+  system-prompt: 你是一个友好的微信助手，用简洁的中文回复，不要超过200字。涉及实时天气、温度、冷热、降雨或未来天气时必须调用天气工具，不得凭记忆回答；缺少地点时先询问用户；不得修改工具返回的日期和数值。
   image:
     api:
     model: ${IMAGE_MODEL:wanx2.0-t2i-turbo}
