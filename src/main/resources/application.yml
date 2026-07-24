@@ -12,6 +12,12 @@ logging:
     path: ./logs
 
 spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/xialingying?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${MYSQL_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
   profiles:
     active: local
   application:
@@ -23,6 +29,11 @@ spring:
       chat:
         options:
           model: ${AI_MODEL:qwen-max}
+      embedding:
+        enabled: true
+        options:
+          model: text-embedding-v3    # 百炼嵌入模型
+
   mail:
     host: ${MAIL_HOST:smtp.qq.com}
     port: ${MAIL_PORT:587}
@@ -46,7 +57,8 @@ ai:
     把回复内容朗读出来
     3. 查天气 — 当用户问天气时使用 getWeather 工具
     4. 查时间 — 当用户问几点/日期时使用 getCurrentTime 工具
-
+    5. 联网搜索 — 当用户询问新闻、考试分数线、政策、股票、赛事、产品信息等需要实时数据或最新消息时，使用 search 工具
+    6. 发送邮件 — 当用户要求发送邮件、把内容发到邮箱、记录备忘时使用 sendEmail 工具
 
   # 图片生成（百炼 DashScope）
   image:
@@ -75,3 +87,9 @@ ai:
       silk-decoder-path: ${VOICE_SILK_DECODER_PATH:}
       silk-encoder-path: ${VOICE_SILK_ENCODER_PATH:}
       process-timeout: ${VOICE_AUDIO_PROCESS_TIMEOUT:30s}
+    #联网搜索
+    search:
+      baidu:
+        api-key: ${BAIDU_SEARCH_API_KEY:}
+        api-url: ${BAIDU_SEARCH_API_URL:https://qianfan.baidubce.com/v2/ai_search/web_search}
+        timeout: ${BAIDU_SEARCH_TIMEOUT:15s}

@@ -10,11 +10,8 @@ import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.demo.demo.Service.context.ContextManager;
-import com.demo.demo.Service.tool.EmailTool;
-import com.demo.demo.Service.tool.ImageGenerationTool;
-import com.demo.demo.Service.tool.TimeTool;
-import com.demo.demo.Service.tool.VoiceReplyTool;
-import com.demo.demo.Service.tool.WeatherTool;
+import com.demo.demo.Service.memory.VectorMemoryStore;
+import com.demo.demo.Service.tool.*;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -48,7 +45,9 @@ public class AIService {
     private final TimeTool timeTool;
     private final ImageGenerationTool imageGenerationTool;
     private final VoiceReplyTool voiceReplyTool;
-
+    private final WebSearchTool webSearchTool;
+    private final EmailTool emailTool;
+    private final VectorMemoryStore vectorMemoryStore;
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
 
@@ -57,13 +56,19 @@ public class AIService {
                      WeatherTool weatherTool,
                      TimeTool timeTool,
                      ImageGenerationTool imageGenerationTool,
-                     VoiceReplyTool voiceReplyTool ) {
+                     VoiceReplyTool voiceReplyTool,
+                     WebSearchTool webSearchTool,
+                     EmailTool emailTool,
+                     VectorMemoryStore vectorMemoryStore) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
         this.timeTool = timeTool;
         this.imageGenerationTool = imageGenerationTool;
         this.voiceReplyTool=voiceReplyTool;
+        this.webSearchTool=webSearchTool;
+        this.emailTool = emailTool;
+        this.vectorMemoryStore = vectorMemoryStore;
     }
 
     @PostConstruct
@@ -106,7 +111,7 @@ public class AIService {
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
-                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool))
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool))
                 .hooks(trimHook)
                 .build();
     }
@@ -122,7 +127,12 @@ public class AIService {
 
         Object lock = userLocks.computeIfAbsent(userId, ignored -> new Object());
         synchronized (lock) {
-            return doChat(userId, message);
+            String reply = doChat(userId, message);
+            if (reply != null) {
+                vectorMemoryStore.saveTurn(userId, message, reply);
+            }
+            return reply;
+
         }
     }
 
@@ -131,6 +141,12 @@ public class AIService {
                 maskUserId(userId), message == null ? 0 : message.length());
 
         String enhancedSystem = contextManager.buildEnhancedSystemMessage(userId, systemPrompt);
+
+        // 向量长期记忆
+        List<String> memories = vectorMemoryStore.retrieveRelevant(userId, message);
+        if (!memories.isEmpty()) {
+            enhancedSystem += "\n\n[长期记忆·相关历史]\n" + String.join("\n", memories);
+        }
 
         try {
             RunnableConfig runnableConfig = RunnableConfig.builder()
