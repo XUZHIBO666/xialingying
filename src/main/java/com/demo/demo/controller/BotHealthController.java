@@ -5,6 +5,8 @@ import com.demo.demo.Service.BotService;
 import com.demo.demo.Service.memory.ConversationMemoryStore;
 import com.demo.demo.config.VoiceProperties;
 import jakarta.annotation.Resource;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -43,7 +45,8 @@ public class BotHealthController {
 
     @Resource
     private ConversationMemoryStore memoryStore;
-
+    @Value("${spring.ai.dashscope.api-key:}")
+    private String dashScopeApiKey;
     @GetMapping("/health/live")
     @ResponseBody
     public Map<String, Object> liveness() {
@@ -176,13 +179,20 @@ public class BotHealthController {
                 "details", Map.of("configured", configured));
     }
 
-    private Map<String, Object> checkTtsApi() {
-        String key = voiceProperties.getTts().getApiKey();
-        boolean configured = key != null && !key.isBlank();
-        return Map.of("name", "ttsApi", "status",
-                configured ? "UP" : "UNKNOWN",
-                "details", Map.of("configured", configured));
-    }
+//    private Map<String, Object> checkTtsApi() {
+//        String key = voiceProperties.getTts().getApiKey();
+//        boolean configured = key != null && !key.isBlank();
+//        return Map.of("name", "ttsApi", "status",
+//                configured ? "UP" : "UNKNOWN",
+//                "details", Map.of("configured", configured));
+//    }
+private Map<String, Object> checkTtsApi() {
+    boolean configured = dashScopeApiKey != null && !dashScopeApiKey.isBlank()
+            && !"sk-placeholder".equals(dashScopeApiKey);
+    return Map.of("name", "ttsApi", "status",
+            configured ? "UP" : "UNKNOWN",
+            "details", Map.of("configured", configured, "provider", "dashscope"));
+}
 
     private String formatUptime() {
         Duration uptime = Duration.between(STARTUP_TIME, Instant.now());

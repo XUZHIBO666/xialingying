@@ -1,119 +1,108 @@
 package com.demo.demo.Service.voice;
 
-import com.demo.demo.config.VoiceProperties;
+import com.alibaba.cloud.ai.dashscope.api.DashScopeAudioSpeechApi;
+import com.alibaba.cloud.ai.dashscope.audio.tts.DashScopeAudioSpeechModel;
+import com.alibaba.cloud.ai.dashscope.audio.tts.DashScopeAudioSpeechOptions;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.*;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.ai.audio.tts.TextToSpeechPrompt;
+import org.springframework.ai.audio.tts.TextToSpeechResponse;
+import org.springframework.ai.model.SimpleApiKey;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.io.IOException;
-import java.time.Duration;
+import java.util.List;
 
 /**
- * TTS 文字转语音服务 —— OkHttp 直调 SiliconFlow API。
+ * TTS 文字转语音服务 —— 基于 Spring AI Alibaba（DashScope / 百炼）。
  *
- * <p>{@code POST https://api.siliconflow.cn/v1/audio/speech}，JSON 请求体，
- * 返回 MP3 二进制。</p>
+ * <p>使用 {@link DashScopeAudioSpeechModel} 调用百炼 CosyVoice 语音合成，
+ * 通过 stream() 收集所有音频分片后拼接为完整 MP3 字节数组。</p>
  */
 @Slf4j
 @Service
 public class SiliconFlowTtsService implements TtsService {
 
-    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-
-    @Autowired
-    private VoiceProperties voiceProperties;
-
-    private OkHttpClient httpClient;
+    @Value("${spring.ai.dashscope.api-key:}")
     private String apiKey;
-    private String apiUrl;
+
+    @Value("${ai.voice.tts.model:cosyvoice-v3-flash}")
     private String model;
+
+    @Value("${ai.voice.tts.voice:longanyang}")
     private String voice;
+
+    private DashScopeAudioSpeechModel speechModel;
+    private DashScopeAudioSpeechOptions options;
 
     @PostConstruct
     public void init() {
-        VoiceProperties.Tts cfg = voiceProperties.getTts();
-        // TTS key 降级到 ASR key
-        this.apiKey = !cfg.getApiKey().isBlank() ? cfg.getApiKey() : voiceProperties.getAsr().getApiKey();
-        this.apiUrl = cfg.getApiUrl();
-        this.model = cfg.getModel();
-        this.voice = cfg.getVoice();
-        this.httpClient = new OkHttpClient.Builder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .readTimeout(cfg.getTimeout())
-                .writeTimeout(Duration.ofSeconds(30))
+        DashScopeAudioSpeechApi speechApi = DashScopeAudioSpeechApi.builder()
+                .apiKey(new SimpleApiKey(apiKey))
+                .baseUrl("https://dashscope.aliyuncs.com/api/v1")
                 .build();
-
-        if (isConfigured()) {
-            log.info("[TTS] 初始化完成（OkHttp 直调） apiUrl={} model={} voice={}",
-                    apiUrl, model, voice);
-        } else {
-            log.warn("[TTS] 未配置 API Key，语音合成不可用。");
-        }
+        this.options = DashScopeAudioSpeechOptions.builder()
+                .model(model)
+                .voice(voice)
+                .format("mp3")
+                .sampleRate(16000)
+                .speed(1.0)
+                .volume(50)
+                .build();
+        this.speechModel = DashScopeAudioSpeechModel.builder()
+                .audioSpeechApi(speechApi)
+                .defaultOptions(options)
+                .build();
+        log.info("[TTS] 初始化完成（DashScope 百炼） model={} voice={}", model, voice);
     }
 
     @Override
     public boolean isConfigured() {
-        return apiKey != null && !apiKey.isBlank();
+        return apiKey != null && !apiKey.isBlank()
+                && !"sk-placeholder".equals(apiKey);
     }
 
     @Override
     public byte[] synthesize(String text) throws IOException {
         if (!isConfigured()) {
-            throw new IOException("TTS 未配置，请设置 VOICE_ASR_API_KEY 或 VOICE_TTS_API_KEY");
+            throw new IOException("TTS 未配置");
         }
         if (text == null || text.isBlank()) {
             throw new IOException("TTS 文本为空");
         }
 
-        // ---- 1. 构造 JSON 请求体 ----
-        String json = String.format(
-                "{\"model\":\"%s\",\"input\":\"%s\",\"voice\":\"%s\",\"response_format\":\"mp3\"}",
-                model, escapeJson(text), voice);
-
-        RequestBody body = RequestBody.create(json, JSON);
-
-        // ---- 2. 发送请求（自动去除 apiUrl 末尾 /v1 避免双写） ----
-        String base = apiUrl.endsWith("/v1") ? apiUrl.substring(0, apiUrl.length() - 3) : apiUrl;
-        String url = base + "/v1/audio/speech";
-        Request request = new Request.Builder()
-                .url(url)
-                .header("Authorization", "Bearer " + apiKey)
-                .header("Content-Type", "application/json")
-                .post(body)
-                .build();
-
-        log.info("[TTS] POST {} voice={} textLength={}", url, voice, text.length());
-
-        try (Response response = httpClient.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                String errBody = response.body() != null ? response.body().string() : "";
-                log.error("[TTS] API 返回错误 status={} body={}", response.code(), errBody);
-                throw new IOException("TTS API 错误 " + response.code() + ": " + errBody);
-            }
-
-            byte[] mp3 = response.body() != null ? response.body().bytes() : new byte[0];
-            log.info("[TTS] 合成成功 mp3Bytes={}", mp3.length);
-            return mp3;
+        try {
+            Flux<TextToSpeechResponse> stream = speechModel.stream(new TextToSpeechPrompt(text, options));
+            byte[] audio = collectStreamBytes(stream);
+            log.info("[TTS] 合成成功 audioBytes={}", audio.length);
+            return audio;
+        } catch (Exception e) {
+            log.error("[TTS] 合成失败: {}", e.getMessage(), e);
+            throw new IOException("TTS 合成失败: " + e.getMessage());
         }
     }
 
-    // ---- JSON 转义 ----
+    private byte[] collectStreamBytes(Flux<TextToSpeechResponse> stream) {
+        List<byte[]> chunks = stream
+                .filter(r -> r != null && r.getResult() != null
+                        && r.getResult().getOutput() != null)
+                .map(r -> r.getResult().getOutput())
+                .collectList()
+                .block();
 
-    private static String escapeJson(String s) {
-        StringBuilder sb = new StringBuilder(s.length() + 16);
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"':  sb.append("\\\""); break;
-                case '\\': sb.append("\\\\"); break;
-                case '\n': sb.append("\\n"); break;
-                case '\r': sb.append("\\r"); break;
-                case '\t': sb.append("\\t"); break;
-                default:   sb.append(c);
-            }
+        if (chunks == null || chunks.isEmpty()) {
+            return new byte[0];
         }
-        return sb.toString();
+
+        int total = chunks.stream().mapToInt(b -> b.length).sum();
+        byte[] result = new byte[total];
+        int offset = 0;
+        for (byte[] chunk : chunks) {
+            System.arraycopy(chunk, 0, result, offset, chunk.length);
+            offset += chunk.length;
+        }
+        return result;
     }
 }

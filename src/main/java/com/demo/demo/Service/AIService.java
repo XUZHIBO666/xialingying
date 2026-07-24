@@ -13,6 +13,7 @@ import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.tool.EmailTool;
 import com.demo.demo.Service.tool.ImageGenerationTool;
 import com.demo.demo.Service.tool.TimeTool;
+import com.demo.demo.Service.tool.VoiceReplyTool;
 import com.demo.demo.Service.tool.WeatherTool;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -46,7 +47,8 @@ public class AIService {
     private final WeatherTool weatherTool;
     private final TimeTool timeTool;
     private final ImageGenerationTool imageGenerationTool;
-    private final EmailTool emailTool;
+    private final VoiceReplyTool voiceReplyTool;
+
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
 
@@ -55,13 +57,13 @@ public class AIService {
                      WeatherTool weatherTool,
                      TimeTool timeTool,
                      ImageGenerationTool imageGenerationTool,
-                     EmailTool emailTool) {
+                     VoiceReplyTool voiceReplyTool ) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
         this.timeTool = timeTool;
         this.imageGenerationTool = imageGenerationTool;
-        this.emailTool = emailTool;
+        this.voiceReplyTool=voiceReplyTool;
     }
 
     @PostConstruct
@@ -104,7 +106,7 @@ public class AIService {
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
-                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, emailTool))
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool))
                 .hooks(trimHook)
                 .build();
     }
