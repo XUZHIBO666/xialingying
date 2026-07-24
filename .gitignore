@@ -2,3 +2,6 @@
 *.exe
 my-shop/
 局部截图_*.png
+logs/
+target/
+src/main/resources/application-local.yml
