@@ -50,4 +50,5 @@ public class WeatherTool {
             return WeatherToolResult.failure(status, e.getMessage());
         }
     }
+    
 }

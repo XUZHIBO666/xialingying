@@ -1,0 +1,50 @@
+# Compiled class file
+*.class
+
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+.worktrees/
+*.iml
+*.iws
+*.ipr
+
+# Logs
+logs/
+data/
+*.log
+
+# Build output
+target/
+
+# BlueJ files
+*.ctxt
+
+# Mobile Tools for Java (J2ME)
+.mtj.tmp/
+
+# Package Files
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# OS
+.DS_Store
+Thumbs.db
+
+# virtual machine crash logs
+hs_err_pid*
+replay_pid*
+
+# 本地敏感配置（含 API Key，不要提交！）
+application-local.yml
+
+# Spring Boot
+*.jar.original

@@ -10,8 +10,10 @@ import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.demo.demo.Service.context.ContextManager;
+import com.demo.demo.Service.tool.EmailTool;
 import com.demo.demo.Service.tool.ImageGenerationTool;
 import com.demo.demo.Service.tool.TimeTool;
+import com.demo.demo.Service.tool.VoiceReplyTool;
 import com.demo.demo.Service.tool.WeatherTool;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -35,19 +37,17 @@ import java.util.concurrent.ConcurrentMap;
 @Slf4j
 @Service
 public class AIService {
-
     @Value("${spring.ai.dashscope.api-key:}")
     private String apiKey;
-
     @Value("${ai.system-prompt}")
     private String systemPrompt;
-
     private ReactAgent agent;
     private final MemorySaver memorySaver;
     private final ContextManager contextManager;
     private final WeatherTool weatherTool;
     private final TimeTool timeTool;
     private final ImageGenerationTool imageGenerationTool;
+    private final VoiceReplyTool voiceReplyTool;
 
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
@@ -56,12 +56,14 @@ public class AIService {
                      ContextManager contextManager,
                      WeatherTool weatherTool,
                      TimeTool timeTool,
-                     ImageGenerationTool imageGenerationTool) {
+                     ImageGenerationTool imageGenerationTool,
+                     VoiceReplyTool voiceReplyTool ) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
         this.timeTool = timeTool;
         this.imageGenerationTool = imageGenerationTool;
+        this.voiceReplyTool=voiceReplyTool;
     }
 
     @PostConstruct
@@ -104,7 +106,7 @@ public class AIService {
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
-                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool))
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool))
                 .hooks(trimHook)
                 .build();
     }
