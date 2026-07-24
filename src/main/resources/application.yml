@@ -1,7 +1,6 @@
 server:
   port: 8080
 
-# 日志配置
 logging:
   level:
     root: INFO
@@ -19,41 +18,51 @@ spring:
     name: demo
   ai:
     dashscope:
-      api-key: ${AI_API_KEY:${ai.api.key:sk-placeholder}}
+      # 百炼/DashScope API Key，文本对话+图片生成/识别+TTS 共用这一个
+      api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
       chat:
         options:
           model: ${AI_MODEL:qwen-max}
 
 ai:
+  # 对话记忆
   memory:
     file: ${AI_MEMORY_FILE:./data/conversation-memory.json}
-  api:
-    key: ${AI_API_KEY:}
-    url: https://api.deepseek.com
-  model: deepseek-chat
-  system-prompt: 你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
+  # 系统提示词
+  system-prompt:  你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
+    
+    你拥有以下能力，根据用户意图自行决定是否使用：
+    1. 生成图片 — 当用户说「生成/画/制作一张...」时使用 generateImage 工具
+    2. 语音回复 — 当用户说「用语音回复/读出来/讲给我听/念一下/播报/发语音/说给我听」
+    等任何想要"听"的表达时，先用文字思考回复内容，然后调用 voiceReply 工具
+    把回复内容朗读出来
+    3. 查天气 — 当用户问天气时使用 getWeather 工具
+    4. 查时间 — 当用户问几点/日期时使用 getCurrentTime 工具
+
+
+  # 图片生成（百炼 DashScope）
   image:
-    api:
     model: ${IMAGE_MODEL:wanx2.0-t2i-turbo}
     size: ${IMAGE_SIZE:1024x1024}
+
+  # 图片识别（百炼兼容模式）
   vision:
-    api:
     model: ${VISION_MODEL:qwen-vl-max}
     prompt: ${VISION_PROMPT:请用中文简洁描述这张图片的主要内容，如果图片中有文字也请读出来。}
+
+  # 语音服务
   voice:
+    # ASR 语音识别（仍然走 SiliconFlow OkHttp 直调）
     asr:
-      # SiliconFlow API Key（在 https://cloud.siliconflow.cn 获取，新用户送 2000 万 tokens）
-      # 设置后自动启用 ASR + TTS：export VOICE_ASR_API_KEY=sk-xxxxxxxx
       api-key: ${VOICE_ASR_API_KEY:}
       api-url: ${VOICE_ASR_API_URL:https://api.siliconflow.cn}
       model: ${VOICE_ASR_MODEL:FunAudioLLM/SenseVoiceSmall}
       timeout: ${VOICE_ASR_TIMEOUT:60s}
+    # TTS 语音合成（已切百炼 DashScope，Key 走 spring.ai.dashscope.api-key）
     tts:
-      api-key: ${VOICE_TTS_API_KEY:${VOICE_ASR_API_KEY:}}
-      api-url: ${VOICE_TTS_API_URL:https://api.siliconflow.cn}
-      model: ${VOICE_TTS_MODEL:FunAudioLLM/CosyVoice2-0.5B}
-      voice: ${VOICE_TTS_VOICE:FunAudioLLM/CosyVoice2-0.5B:anna}
-      timeout: ${VOICE_TTS_TIMEOUT:60s}
+      model: ${TTS_MODEL:cosyvoice-v3-flash}
+      voice: ${TTS_VOICE:longanyang}
+    # 音频编解码（SILK ↔ PCM）
     audio:
       silk-decoder-path: ${VOICE_SILK_DECODER_PATH:}
       silk-encoder-path: ${VOICE_SILK_ENCODER_PATH:}
