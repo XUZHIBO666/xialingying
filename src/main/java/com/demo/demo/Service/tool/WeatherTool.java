@@ -21,4 +21,5 @@ public class WeatherTool {
             return "天气查询失败: " + e.getMessage();
         }
     }
+    
 }

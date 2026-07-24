@@ -23,6 +23,14 @@ spring:
       chat:
         options:
           model: ${AI_MODEL:qwen-max}
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    from-name: ${MAIL_FROM_NAME:微信Bot助手}
+    rate-limit-count: ${MAIL_RATE_LIMIT_COUNT:3}
+    rate-limit-minutes: ${MAIL_RATE_LIMIT_MINUTES:10}
 
 ai:
   # 对话记忆
