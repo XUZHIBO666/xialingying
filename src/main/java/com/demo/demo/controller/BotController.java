@@ -8,8 +8,7 @@ import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.tool.ImageGenerationTool;
 import com.demo.demo.Service.tool.VoiceReplyTool;
 import com.demo.demo.Service.voice.VoiceMessageHandler;
-import com.demo.demo.Utils.WeatherUtil;
-import com.demo.demo.execption.BizException;
+
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -67,6 +66,21 @@ public class BotController {
             if (!aiService.isConfigured()) {
                 return "AI 未配置，请联系管理员";
             }
+
+            // -- 工具1：查时间 --
+            if (text.contains("几点") || text.contains("时间") || text.contains("日期")) {
+                String now = LocalDateTime.now()
+                        .format(DateTimeFormatter.ofPattern("yyyy年MM月dd日 HH:mm:ss"));
+                String prompt = "用户问: \"" + text + "\"\n"
+                        + "当前精确时间是: " + now + "\n"
+                        + "请用一句话告诉用户现在的时间。";
+                String reply = aiService.chat(fromUser, prompt);
+                if (reply != null) return reply;
+            }
+
+            // -- 普通对话（ReactAgent 内置工具调用） --
+            String aiReply = aiService.chat(fromUser, text);
+            if (aiReply != null) return aiReply;
             String aiReply = aiService.chat(fromUser,text);
             if(aiReply == null || aiReply.isBlank()){
                 return "AI回复为空，请稍后再试";
@@ -303,31 +317,6 @@ public class BotController {
     }
 
     // ==================== 工具方法 ====================
-
-    /**
-     * 从消息中提取城市名
-     * 如 "今天杭州天气怎么样" → "杭州"
-     */
-    private String extractCity(String text) {
-        int idx = text.indexOf("天气");
-        if (idx <= 0) return null;
-
-        String before = text.substring(0, idx);
-
-        // 逐步去掉前缀/动词/标点
-        before = before.replaceAll("(?s).*?(查一下|帮我查|我想知道|我想了解|给我查|请问)", "");
-        before = before.replaceAll("(?s).*?(今天|明天|后天|昨天|现在|这周|下周|本周)", "");
-        before = before.replaceAll("(?s).*?(在|的|了|呢|吗|啊|呀|吧|一下|下)", "");
-        before = before.replaceAll("[，。！？、,.\\s]", "");
-        before = before.trim();
-
-        // 太长则只取后2-3字
-        if (before.length() > 6) {
-            before = before.substring(before.length() - 3);
-        }
-
-        return before.isEmpty() ? null : before;
-    }
 
     private static String maskToken(String token) {
         if (token == null || token.isBlank()) return "null";

@@ -36,6 +36,18 @@ ai:
       silk-encoder-path: E:/path/to/silk/silk_v3_encoder.exe
       process-timeout: 30s
 
+# 天气模块（可选覆盖，默认值适用于 Open-Meteo 免费 API）
+# weather:
+#   geocoding-base-url: https://geocoding-api.open-meteo.com/v1/search
+#   forecast-base-url: https://api.open-meteo.com/v1/forecast
+#   connect-timeout: 3s
+#   read-timeout: 5s
+#   location-cache-ttl: 24h
+#   current-cache-ttl: 10m
+#   forecast-cache-ttl: 60m
+#   max-cache-entries: 256
+#   batch-limit: 10
+
 
 
 

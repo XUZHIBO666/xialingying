@@ -154,15 +154,6 @@ public class AIService {
         }
     }
 
-    /**
-     * 带 Function Calling 能力的聊天，直接复用 chat()。
-     * ReactAgent 已在构造时注册了 {@link WeatherTool}、{@link TimeTool}、
-     * {@link ImageGenerationTool}、{@link EmailTool}，调用时 LLM 自动决定是否触发工具。
-     */
-    public String chatWithTools(String userId, String message) {
-        return chat(userId, message);
-    }
-
     // ==================== 对话记忆 ====================
 
     /** 是否已经配置 API Key。排除占位符和默认假值。 */

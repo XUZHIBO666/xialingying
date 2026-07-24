@@ -1,5 +1,6 @@
 package com.demo.demo.execption;
 
+import com.demo.demo.Service.weather.WeatherException;
 import com.demo.demo.Utils.Response;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -82,6 +83,29 @@ public class GlobalExpectionHandler {
                                              HttpServletRequest request) {
         log.warn("[非法参数] 路径: {} | {}", request.getRequestURI(), e.getMessage());
         return Response.fail(ResponseCodeEnum.BAD_REQUEST, e.getMessage());
+    }
+
+    // ==================== 天气异常 ====================
+
+    /**
+     * 处理天气模块 WeatherException，映射到 REST 错误码。
+     */
+    @ExceptionHandler(WeatherException.class)
+    @ResponseStatus(HttpStatus.OK)
+    public Response<?> handleWeatherException(WeatherException e, HttpServletRequest request) {
+        log.warn("[天气异常] 路径: {} | 错误类型: {}",
+                request.getRequestURI(), e.getError());
+
+        ResponseCodeEnum responseCode = switch (e.getError()) {
+            case LOCATION_REQUIRED -> ResponseCodeEnum.CITY_NAME_EMPTY;
+            case LOCATION_AMBIGUOUS -> ResponseCodeEnum.CITY_AMBIGUOUS;
+            case LOCATION_NOT_FOUND -> ResponseCodeEnum.CITY_NOT_FOUND;
+            case INVALID_DATE -> ResponseCodeEnum.WEATHER_DATE_INVALID;
+            case PROVIDER_TIMEOUT -> ResponseCodeEnum.THIRD_PARTY_TIMEOUT;
+            case PROVIDER_UNAVAILABLE -> ResponseCodeEnum.THIRD_PARTY_UNAVAILABLE;
+            case PROVIDER_RESPONSE_INVALID -> ResponseCodeEnum.WEATHER_PARSE_ERROR;
+        };
+        return Response.fail(responseCode, e.getMessage());
     }
 
     // ==================== 网络相关异常 ====================
