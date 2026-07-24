@@ -30,9 +30,7 @@
 | ASR 语音识别 | 未实现 | 无 | 无 | 待选 ASR 供应商 | 无 | 无 | 没有 AsrService、配置或调用 | 完成官方文本准确率决策后实现 |
 | 语音进入 LLM | 未实现 | 无 | 无 | ASR、AIService | 无 | 无 | 语音分支没有 contextToken 和回复编排 | 实现 VoiceProcessingService |
 | TTS/语音回复 | 未实现 | 无 | 无 | TTS、SDK sendVoiceMessage | 无 | 无 | 主项目未调用 sendVoiceMessage | 一期文字回复验收后再做 |
-| 天气底层查询 | 已完整验证 | `src/main/java/com/demo/demo/Utils/WeatherUtil.java` | `getWeather()` | wttr.in、OkHttp | 25 项天气测试通过并访问真实网络 | 自动测试已包含真实服务验证 | 依赖外部免费服务；DEBUG 输出完整 JSON | 保留受控集成测试并降低敏感日志 |
-| 天气 REST API | 自动测试通过但未人工验证 | `src/main/java/com/demo/demo/controller/WeatherController.java` | `getWeather()`、`batchQuery()` | WeatherUtil、Spring MVC | 上下文和底层测试通过；无 MockMvc | 待验证 | HTTP 绑定与响应未端到端测试 | 增加 MockMvc 和人工 HTTP 检查 |
-| 微信天气回复 | 部分实现 | `src/main/java/com/demo/demo/controller/BotController.java` | `initAutoReply()`、`extractCity()` | WeatherUtil、AIService | 无完整链路测试 | 待验证 | 关键词路由；无 LLM Key 时提前退出 | 执行真实微信天气清单 |
+| 天气模块（完整） | 已完整重构并验证 | `Service/weather/`（12 文件）、`Service/tool/WeatherTool.java`、`controller/WeatherController.java` | `queryWeather()`、REST API | Open-Meteo、Caffeine、ReactAgent Tool Calling | 43 项确定性单元测试通过，零公网依赖 | Tool/REST/Agent 路由全覆盖 | 真实 Open-Meteo 手动验证待完成 | 执行手动天气清单 |
 | 时间查询 | 部分实现 | `src/main/java/com/demo/demo/controller/BotController.java` | `initAutoReply()` | LocalDateTime、AIService | 无 | 待验证 | 必须依赖 LLM；关键词有限 | 增加路由测试 |
 | messageId 去重 | 未实现 | `src/main/java/com/demo/demo/Service/BotService.java` | `startListening()` | SDK DTO 已提供字段 | 无 | 无 | 重复投递会重复调用和回复 | 增加幂等存储及重复测试 |
 | 同用户顺序处理 | 未实现 | `src/main/java/com/demo/demo/Service/BotService.java` | `submitReplyTask()` | 共享两线程池 | 无 | 无 | 后发先回、历史竞态 | 引入用户级串行调度 |
@@ -40,5 +38,5 @@
 | 会话过期自动重登 | 未实现 | `src/main/java/com/demo/demo/Service/BotService.java` | `startListening()` | iLink SDK | 无 | 无 | 持续使用旧凭据重试 | 识别会话过期并转登录状态 |
 | 程序优雅关闭 | 部分实现 | `src/main/java/com/demo/demo/Service/BotService.java` | `shutdownReplyExecutor()` | @PreDestroy | 无 | 待验证 | 只关闭回复池，未明确停止 iLink 线程 | 执行关闭清单并补生命周期测试 |
 | Git 跟踪的模型凭据 | 部分实现 | `.idea/workspace.xml`、`.gitignore` | Git 索引与脱敏扫描命令 | Git、供应商凭据控制台 | 修复前稳定复现；修复后验证 tracked=false、本地文件保留、忽略规则命中、跟踪文件脱敏扫描通过 | 新凭据的文本、生图和识图真实调用均返回 HTTP 200；旧凭据撤销仍待人工确认 | Git 历史仍含旧值；供应商侧撤销状态无法从仓库确认 | 在供应商控制台确认旧凭据已撤销，再通过 IDEA 启动项目执行微信端到端验证 |
-| Agent/Tool/Function Calling | 未实现 | 无 | 无 | 无 | 无 | 无 | 当前只有关键词路由 | 有明确需求后再设计 |
-| 独立 weather-cli | 仅存在孤立代码 | `weather-cli/src/main/java/com/weathercli/WeatherCLI.java` | `main()` | 独立 Java 17 Maven 项目 | 根项目不测试 | 未验证 | 不属于根 Maven 模块，容易混淆 | 明确归档或独立维护 |
+| Agent/Tool/Function Calling | 已实现（天气 Tool） | `Service/tool/WeatherTool.java` | `queryWeather()` | Spring AI @Tool、ReactAgent | 10 项 Tool 测试 + 3 项路由测试 | WeatherToolResult 含 7 种机器可读状态 | 时间 Tool 也已注册到 ReactAgent | 扩展更多工具 |
+| 独立 weather-cli | 归档项目 | `weather-cli/` | 独立 CLI 工具 | Open-Meteo、Java 17 | 不属于主 Maven 模块 | 主项目不测试；weather-cli 源码保留供参考 | 与主项目不共享代码 | 如需保留可明确独立维护 |

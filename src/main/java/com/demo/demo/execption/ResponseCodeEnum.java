@@ -19,6 +19,8 @@ public enum ResponseCodeEnum {
     CITY_NAME_EMPTY("40003", "城市名不能为空"),
     CITY_NOT_FOUND("40004", "未找到该城市，请检查城市名拼写"),
     CITY_NAME_INVALID("40005", "城市名无效，请使用中文/拼音/英文城市名"),
+    CITY_AMBIGUOUS("40006", "城市名称不明确，请补充省份或国家"),
+    WEATHER_DATE_INVALID("40007", "仅支持查询今天至后天的天气"),
 
     // ==================== 服务端错误 5xx ====================
     INTERNAL_ERROR("500", "服务器内部错误"),

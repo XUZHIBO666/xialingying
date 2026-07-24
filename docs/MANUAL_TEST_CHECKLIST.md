@@ -302,25 +302,33 @@ ffprobe 摘要：
 
 关联代码：
 
-- `BotController.initAutoReply()`
-- `BotController.extractCity()`
-- `WeatherUtil.getWeather()`
-- `WeatherController.getWeather()`
+- `WeatherTool.queryWeather()` — Spring AI Tool Calling 入口
+- `WeatherService.query()` — 应用服务
+- `OpenMeteoWeatherProvider` — Open-Meteo 供应商适配器
+- `WeatherController.getWeather()` / `batchQuery()` — REST API
 
 步骤：
 
-1. 微信发送“杭州天气怎么样？”。
-2. 微信发送英文城市天气问题。
-3. 调用 REST `GET /api/weather?city=杭州`。
-4. 测试不存在城市和非法字符。
+1. 微信发送”杭州天气怎么样？” → ReactAgent 调用 query_weather Tool
+2. 微信发送”杭州明天会下雨吗” → 返回逐日预报
+3. 微信发送”杭州后天天气” → 返回后天预报
+4. 微信发送”今天热不热”（无地点）→ Agent 追问城市
+5. 微信发送”明天会下雨吗”（无地点）→ Agent 追问城市
+6. 微信发送”北京天气” → 再发”那后天呢？” → Agent 沿用北京
+7. 调用 REST `GET /api/weather?city=杭州&date=明天`
+8. 调用 REST `POST /api/weather/batch` `{“cities”:[“杭州”,”北京”]}`
+9. 测试不存在的城市 → 返回 CITY_NOT_FOUND
+10. 测试超出三天范围 → 返回 WEATHER_DATE_INVALID
 
 预期：
 
-- [ ] 微信关键词正确进入天气分支。
-- [ ] 城市提取正确。
-- [ ] 回复包含实时温度、天气、湿度或风力。
-- [ ] REST 返回统一 Response 结构。
-- [ ] 无效城市收到明确错误。
+- [ ] 所有天气请求统一通过 ReactAgent Tool Calling
+- [ ] 回复基于结构化天气数据，不编造数值
+- [ ] 缺少地点时 Agent 追问城市
+- [ ] 上下文追问正确沿用之前的城市
+- [ ] REST 返回结构化 WeatherReport（含 type / location / targetDate / source）
+- [ ] 无效城市收到稳定错误码
+- [ ] 批量查询正确返回混合成功/失败结果
 
 结果：`通过 / 失败 / 无法确认`  
 证据位置：

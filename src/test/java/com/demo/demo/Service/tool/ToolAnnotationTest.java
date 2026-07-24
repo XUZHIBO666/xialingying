@@ -5,18 +5,16 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 测试 @Tool 注解的方法（Spring AI 方式，替代旧 Tool 接口）。
+ * Tests that Spring AI @Tool annotations are correctly present on tool methods.
  */
 class ToolRegistryTest {
 
     @Test
     void weatherToolHasToolAnnotation() throws Exception {
-        WeatherTool tool = new WeatherTool();
-        // 直接调用方法验证
-        java.lang.reflect.Method method = WeatherTool.class.getMethod("getWeather", String.class);
+        java.lang.reflect.Method method = WeatherTool.class
+                .getMethod("queryWeather", String.class, String.class);
         assertNotNull(method);
 
-        // 验证 @Tool 注解存在
         var toolAnnotation = method.getAnnotation(org.springframework.ai.tool.annotation.Tool.class);
         assertNotNull(toolAnnotation);
         assertTrue(toolAnnotation.description().contains("天气"));
