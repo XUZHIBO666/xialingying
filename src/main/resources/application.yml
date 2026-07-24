@@ -29,6 +29,11 @@ spring:
       chat:
         options:
           model: ${AI_MODEL:qwen-max}
+      embedding:
+        enabled: true
+        options:
+          model: text-embedding-v3    # 百炼嵌入模型
+
   mail:
     host: ${MAIL_HOST:smtp.qq.com}
     port: ${MAIL_PORT:587}
