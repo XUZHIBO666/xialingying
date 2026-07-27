@@ -49,7 +49,7 @@ public class SiliconFlowTtsService implements TtsService {
                 .format("mp3")
                 .sampleRate(16000)
                 .speed(1.0)
-                .volume(50)
+                .volume(50)//音量大小
                 .build();
         this.speechModel = DashScopeAudioSpeechModel.builder()
                 .audioSpeechApi(speechApi)

@@ -30,15 +30,21 @@ public class VectorMemoryStore {
 
     /** 保存一轮对话（user + assistant 各一条向量） */
     public void saveTurn(String userId, String userMessage, String assistantMessage) {
+        //将用户信息向量化
         float[] userVec = embed(userMessage);
+        //将AI信息向量化
         float[] aiVec = embed(assistantMessage);
+        //保存用户信息，和用户向量化信息
         saveOne(userId, "user", userMessage, userVec);
+        //保存AI信息，和AI向量化信息
         saveOne(userId, "assistant", assistantMessage, aiVec);
+        //检查消息是否达到上限值，从下往上检索只留下后四十条信息
         pruneUser(userId);
     }
 
     /** 检索与当前消息最相关的历史记忆 */
     public List<String> retrieveRelevant(String userId, String currentMessage) {
+        //将当条信息向量化
         float[] queryVec = embed(currentMessage);
 
         List<Row> rows = jdbc.query(
@@ -51,20 +57,20 @@ public class VectorMemoryStore {
         }
 
         return rows.stream()
-                .map(r -> new Scored(r.content, cosine(queryVec, r.vec)))
-                .filter(s -> s.score > 0.5)
-                .sorted(Comparator.comparingDouble((Scored s) -> s.score).reversed())
-                .limit(RETRIEVAL_TOP_K)
-                .map(s -> s.content)
+                .map(r -> new Scored(r.content, cosine(queryVec, r.vec)))//记录每条信息和当前信息的余弦相似度
+                .filter(s -> s.score > 0.5)//过滤掉余弦相似度小于0.5的
+                .sorted(Comparator.comparingDouble((Scored s) -> s.score).reversed())//按照余弦相似度的大小从大到小排序
+                .limit(RETRIEVAL_TOP_K)//限制信息个数五条
+                .map(s -> s.content)//提取信息内容
                 .toList();
     }
 
     // ==================== 内部方法 ====================
-
+    //返回向量化后的信息
     private float[] embed(String text) {
-        return embeddingModel.embed(text);
+        return embeddingModel.embed(text);//将信息向量化,成为一个浮点值数组
     }
-
+    //将信息以及向量化过后的信息保存在数据库中
     private void saveOne(String userId, String role, String content, float[] vec) {
         try {
             String json = objectMapper.writeValueAsString(vec);
@@ -75,7 +81,7 @@ public class VectorMemoryStore {
             log.error("[VectorMemory] 序列化向量失败: {}", e.getMessage());
         }
     }
-
+    //检查信息是否已经达到了上限值，从下往上检索只留下后四十条信息
     private void pruneUser(String userId) {
         jdbc.update(
                 "DELETE FROM vector_memory WHERE user_id = ? AND id NOT IN ("
@@ -84,7 +90,7 @@ public class VectorMemoryStore {
                         + ") AS t)",
                 userId, userId, MAX_PER_USER);
     }
-
+    //将JSON格式的信息转化为float数组
     private float[] parseJson(String json) {
         try {
             return objectMapper.readValue(json, float[].class);
@@ -92,7 +98,7 @@ public class VectorMemoryStore {
             return new float[0];
         }
     }
-
+//计算向量值的余弦相似度
     private double cosine(float[] a, float[] b) {
         if (a.length == 0 || b.length == 0) return 0;
         double dot = 0, na = 0, nb = 0;
@@ -105,7 +111,8 @@ public class VectorMemoryStore {
         double denominator = Math.sqrt(na) * Math.sqrt(nb);
         return denominator == 0 ? 0 : dot / denominator;
     }
-
+    //定义一个记录类，用于保存检索到的向量信息
     private record Row(String content, float[] vec) {}
+    //定义一个记录类，用于保存检索到的向量信息以及相似度
     private record Scored(String content, double score) {}
 }

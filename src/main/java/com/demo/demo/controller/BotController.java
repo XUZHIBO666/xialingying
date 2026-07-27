@@ -70,15 +70,16 @@ public class BotController {
             }
 
             // -- 工具1：查时间 --
-            if (text.contains("几点") || text.contains("时间") || text.contains("日期")) {
-                String now = LocalDateTime.now()
-                        .format(DateTimeFormatter.ofPattern("yyyy年MM月dd日 HH:mm:ss"));
-                String prompt = "用户问: \"" + text + "\"\n"
-                        + "当前精确时间是: " + now + "\n"
-                        + "请用一句话告诉用户现在的时间。";
-                String reply = aiService.chat(fromUser, prompt);
-                if (reply != null) return reply;
-            }
+            // 注：ReactAgent 已内置 TimeTool，无需手动拦截，故注释掉
+            //if (text.contains("几点") || text.contains("时间") || text.contains("日期")) {
+            //    String now = LocalDateTime.now()
+            //            .format(DateTimeFormatter.ofPattern("yyyy年MM月dd日 HH:mm:ss"));
+            //    String prompt = "用户问: \"" + text + "\"\n"
+            //            + "当前精确时间是: " + now + "\n"
+            //            + "请用一句话告诉用户现在的时间。";
+            //    String reply = aiService.chat(fromUser, prompt);
+            //    if (reply != null) return reply;
+            //}
 
             // -- 普通对话（ReactAgent 内置工具调用） --
             String aiReply = aiService.chat(fromUser, text);
