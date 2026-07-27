@@ -10,6 +10,8 @@ import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.demo.demo.Service.context.ContextManager;
+import com.demo.demo.Service.memory.MemoryAgentHook;
+import com.demo.demo.Service.memory.MemoryContextInterceptor;
 import com.demo.demo.Service.memory.VectorMemoryStore;
 import com.demo.demo.Service.tool.*;
 import jakarta.annotation.PostConstruct;
@@ -112,7 +114,8 @@ public class AIService {
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
                 .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool))
-                .hooks(trimHook)
+                .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore))
+                .interceptors(new MemoryContextInterceptor())
                 .build();
     }
 
@@ -140,13 +143,8 @@ public class AIService {
         log.info("[AI] 收到对话请求 userId={} messageLength={}",
                 maskUserId(userId), message == null ? 0 : message.length());
 
+        // ContextManager 增强（上下文注入，不含长期记忆——记忆由 MemoryAgentHook + MemoryContextInterceptor 负责）
         String enhancedSystem = contextManager.buildEnhancedSystemMessage(userId, systemPrompt);
-
-        // 向量长期记忆
-        List<String> memories = vectorMemoryStore.retrieveRelevant(userId, message);
-        if (!memories.isEmpty()) {
-            enhancedSystem += "\n\n[长期记忆·相关历史]\n" + String.join("\n", memories);
-        }
 
         try {
             RunnableConfig runnableConfig = RunnableConfig.builder()

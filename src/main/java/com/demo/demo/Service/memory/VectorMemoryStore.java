@@ -2,6 +2,7 @@ package com.demo.demo.Service.memory;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -28,18 +29,22 @@ public class VectorMemoryStore {
         log.info("[VectorMemory] 初始化完成");
     }
 
-    /** 保存一轮对话（user + assistant 各一条向量） */
+
+
+    /** 保存一轮对话（user + assistant 各一条向量），内部异常不影响调用方 */
     public void saveTurn(String userId, String userMessage, String assistantMessage) {
-        //将用户信息向量化
-        float[] userVec = embed(userMessage);
-        //将AI信息向量化
-        float[] aiVec = embed(assistantMessage);
-        //保存用户信息，和用户向量化信息
-        saveOne(userId, "user", userMessage, userVec);
-        //保存AI信息，和AI向量化信息
-        saveOne(userId, "assistant", assistantMessage, aiVec);
-        //检查消息是否达到上限值，从下往上检索只留下后四十条信息
-        pruneUser(userId);
+        try {
+            float[] userVec = embed(userMessage);
+            float[] aiVec = embed(assistantMessage);
+            int r1 = saveOne(userId, "user", userMessage, userVec);
+            int r2 = saveOne(userId, "assistant", assistantMessage, aiVec);
+            pruneUser(userId);
+            long total = countByUser(userId);
+            log.info("[VectorMemory] 保存成功 userId={} userMsgLen={} aiMsgLen={} insertRows={}/{} totalRows={}",
+                    mask(userId), userMessage.length(), assistantMessage.length(), r1, r2, total);
+        } catch (Exception e) {
+            log.error("[VectorMemory] 保存失败 userId={}: {}", mask(userId), e.getMessage(), e);
+        }
     }
 
     /** 检索与当前消息最相关的历史记忆 */
@@ -70,16 +75,25 @@ public class VectorMemoryStore {
     private float[] embed(String text) {
         return embeddingModel.embed(text);//将信息向量化,成为一个浮点值数组
     }
-    //将信息以及向量化过后的信息保存在数据库中
-    private void saveOne(String userId, String role, String content, float[] vec) {
+    //将信息以及向量化过后的信息保存在数据库中，返回影响行数
+    private int saveOne(String userId, String role, String content, float[] vec) {
         try {
             String json = objectMapper.writeValueAsString(vec);
-            jdbc.update(
+            int rows = jdbc.update(
                     "INSERT INTO vector_memory (user_id, role, content, embedding, created_at) VALUES (?, ?, ?, ?, ?)",
                     userId, role, content, json, LocalDateTime.now());
-        } catch (JsonProcessingException e) {
-            log.error("[VectorMemory] 序列化向量失败: {}", e.getMessage());
+            return rows;
+        } catch (Exception e) {
+            log.error("[VectorMemory] 保存单条失败 role={}: {}", role, e.getMessage(), e);
+            throw new RuntimeException("保存向量记忆失败", e);
         }
+    }
+
+    /** 查询某用户的记忆条数（调试用） */
+    public long countByUser(String userId) {
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM vector_memory WHERE user_id = ?", Long.class, userId);
+        return count != null ? count : 0;
     }
     //检查信息是否已经达到了上限值，从下往上检索只留下后四十条信息
     private void pruneUser(String userId) {
@@ -111,6 +125,11 @@ public class VectorMemoryStore {
         double denominator = Math.sqrt(na) * Math.sqrt(nb);
         return denominator == 0 ? 0 : dot / denominator;
     }
+    private static String mask(String s) {
+        if (s == null || s.length() < 9) return "***";
+        return s.substring(0, 4) + "..." + s.substring(s.length() - 4);
+    }
+
     //定义一个记录类，用于保存检索到的向量信息
     private record Row(String content, float[] vec) {}
     //定义一个记录类，用于保存检索到的向量信息以及相似度
