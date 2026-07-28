@@ -2,6 +2,9 @@ package com.demo.demo.controller;
 
 import com.demo.demo.Service.*;
 import com.demo.demo.Service.context.ContextManager;
+import com.demo.demo.Service.messaging.AgentCallerContext;
+import com.demo.demo.Service.scheduling.application.DeliveryTargetRefreshCommand;
+import com.demo.demo.Service.scheduling.application.DeliveryTargetService;
 import com.demo.demo.Service.tool.ImageGenerationTool;
 import com.demo.demo.Service.tool.VoiceReplyTool;
 import com.demo.demo.Service.voice.VoiceMessageHandler;
@@ -11,6 +14,8 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.Instant;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -54,6 +59,9 @@ public class BotController {
     @Resource
     private ContextManager contextManager;
 
+    @Resource
+    private DeliveryTargetService deliveryTargetService;
+
     // ==================== 初始化：设置自动回复 ====================
 
     @PostConstruct
@@ -69,20 +77,11 @@ public class BotController {
                 return "AI 未配置，请联系管理员";
             }
 
-            // -- 工具1：查时间 --
-            // 注：ReactAgent 已内置 TimeTool，无需手动拦截，故注释掉
-            //if (text.contains("几点") || text.contains("时间") || text.contains("日期")) {
-            //    String now = LocalDateTime.now()
-            //            .format(DateTimeFormatter.ofPattern("yyyy年MM月dd日 HH:mm:ss"));
-            //    String prompt = "用户问: \"" + text + "\"\n"
-            //            + "当前精确时间是: " + now + "\n"
-            //            + "请用一句话告诉用户现在的时间。";
-            //    String reply = aiService.chat(fromUser, prompt);
-            //    if (reply != null) return reply;
-            //}
+            // 刷新 delivery target，构建可信 caller context
+            AgentCallerContext callerContext = buildCallerContext(fromUser, contextToken);
 
             // -- 普通对话（ReactAgent 内置工具调用） --
-            String aiReply = aiService.chat(fromUser, text);
+            String aiReply = aiService.chat(fromUser, text, callerContext);
             if (aiReply == null || aiReply.isBlank()) {
                 return "AI回复为空，请稍后再试";
             }
@@ -116,10 +115,12 @@ public class BotController {
             return "抱歉，我没有识别到这张图片的内容";
         }
         contextManager.recordImage(fromUser, description.trim());
+
+        AgentCallerContext callerContext = buildCallerContext(fromUser, contextToken);
         if (aiService.isConfigured()){
             String prompt = "用户发了一张图片，图片内容是：「" + description + "」\n"
                     + "请根据图片内容用中文简短回复用户。如果用户之前问了关于图片的问题，请一并回答。";
-            String aiReply = aiService.chat(fromUser,prompt);
+            String aiReply = aiService.chat(fromUser, prompt, callerContext);
             if (aiReply!=null && !aiReply.isBlank()){
                 byte[] newImage = imageGenerationTool.takeLastImage();
                 if (newImage !=null){
@@ -277,6 +278,18 @@ public class BotController {
         if (token == null || token.isBlank()) return "null";
         if (token.length() <= 8) return "***";
         return token.substring(0, 4) + "..." + token.substring(token.length() - 4);
+    }
+
+    private AgentCallerContext buildCallerContext(String userId, String contextToken) {
+        try {
+            String targetId = deliveryTargetService.refresh(
+                    new DeliveryTargetRefreshCommand(userId, contextToken, Instant.now()));
+            return new AgentCallerContext(targetId);
+        } catch (Exception e) {
+            log.warn("[BotController] 刷新 delivery target 失败 from={}: {}",
+                    maskUserId(userId), e.getMessage());
+            return null;
+        }
     }
 
     private static String maskUserId(String userId) {
