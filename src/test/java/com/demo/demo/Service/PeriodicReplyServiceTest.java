@@ -135,6 +135,31 @@ class PeriodicReplyServiceTest {
     }
 
     @Test
+    void rejectsDuplicateActiveTaskForSameUser() {
+        PeriodicReplyService service = service(tempDir.resolve("tasks.json"));
+        service.create("u", "t", "DAILY", "08:00", "FIXED", "take medicine");
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> service.create(
+                        "u", "new-token", "DAILY", "08:00",
+                        "FIXED", "take medicine"));
+
+        assertTrue(ex.getMessage().contains("已存在"));
+        assertEquals(1, service.list("u").size());
+    }
+
+    @Test
+    void listShowsNextRunTimeWithoutToken() {
+        PeriodicReplyService service = service(tempDir.resolve("tasks.json"));
+        service.create("u", "secret-token", "DAILY", "08:00", "FIXED", "take medicine");
+
+        String result = service.listPeriodicReplies(toolContext("u", "secret-token"));
+
+        assertTrue(result.contains("下次"));
+        assertFalse(result.contains("secret-token"));
+    }
+
+    @Test
     void intervalSummaryPreservesMinutes() {
         PeriodicReplyService service = service(tempDir.resolve("tasks.json"));
         service.create(

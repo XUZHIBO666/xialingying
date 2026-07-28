@@ -23,6 +23,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,6 +43,8 @@ public class PeriodicReplyService {
     static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
     static final int MAX_TASKS_PER_USER = 20;
     private static final int FILE_VERSION = 1;
+    private static final DateTimeFormatter NEXT_RUN_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     public record PeriodicTask(
             int id,
@@ -128,6 +131,11 @@ public class PeriodicReplyService {
             if (userTasks.size() >= MAX_TASKS_PER_USER) {
                 throw new IllegalStateException("每个用户最多创建 20 个周期任务");
             }
+            boolean duplicate = userTasks.stream().anyMatch(task ->
+                    sameTask(task, normalizedType, scheduleValue, normalizedMode, content));
+            if (duplicate) {
+                throw new IllegalStateException("已存在相同周期任务");
+            }
             int id = userTasks.stream().mapToInt(PeriodicTask::id).max().orElse(0) + 1;
             PeriodicTask task = new PeriodicTask(
                     id, userId, contextToken, normalizedType, scheduleValue,
@@ -176,7 +184,8 @@ public class PeriodicReplyService {
 
     @Tool(description = "创建周期回复任务。scheduleType 仅可为 INTERVAL、DAILY、WEEKLY；"
             + "scheduleValue 示例 PT2H、08:00、MONDAY@09:00；"
-            + "mode 仅可为 FIXED 或 AGENT。")
+            + "mode 仅可为 FIXED 或 AGENT。"
+            + "自然语言映射：每天 8 点 => DAILY/08:00；每周一 9 点 => WEEKLY/MONDAY@09:00；每隔 2 小时 => INTERVAL/PT2H。")
     public String createPeriodicReply(
             String scheduleType,
             String scheduleValue,
@@ -344,7 +353,7 @@ public class PeriodicReplyService {
         String action = "AGENT".equals(task.mode())
                 ? "，由 Agent 执行“" + task.content() + "”"
                 : "，固定发送“" + task.content() + "”";
-        return schedule + action;
+        return schedule + action + "，下次 " + formatNextRun(task.nextRunAt());
     }
 
     private static String formatInterval(String scheduleValue) {
@@ -356,6 +365,22 @@ public class PeriodicReplyService {
             return seconds / 60 + " 分钟";
         }
         return seconds + " 秒";
+    }
+
+    private static String formatNextRun(Instant nextRunAt) {
+        return NEXT_RUN_FORMAT.format(nextRunAt.atZone(ZONE));
+    }
+
+    private static boolean sameTask(
+            PeriodicTask task,
+            String scheduleType,
+            String scheduleValue,
+            String mode,
+            String content) {
+        return task.scheduleType().equals(scheduleType)
+                && task.scheduleValue().equals(scheduleValue)
+                && task.mode().equals(mode)
+                && task.content().equals(content);
     }
 
     private Instant nextInterval(String scheduleValue, Instant after) {

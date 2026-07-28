@@ -741,3 +741,76 @@ git commit -m "docs: 配置周期回复"
 - [ ] **步骤 8：记录延期的人工验证**
 
 在实施交接中明确说明：必须使用真实已登录微信账号，验证旧 iLink `contextToken` 在计划支持的最长提醒间隔后是否仍可使用。在该检查成功之前，不得声称已证明长延迟主动发送可用。
+
+---
+
+### Task 6: Lightweight UX Hardening
+
+**Goal:** Improve real WeChat usability with minimal code and no new production class.
+
+**Files:**
+- Modify: `src/main/java/com/demo/demo/Service/PeriodicReplyService.java`
+- Test: `src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java`
+- Optional modify: `src/main/java/com/demo/demo/Service/AIService.java` only if prompt guidance is needed.
+
+**Constraints:**
+- Do not add a parser class, repository class, scheduler class, DTO class, or database table.
+- Keep `MessagesModelHook trimHook` unchanged.
+- Keep task file format backward compatible.
+- Prefer improving existing tool descriptions and output text over adding new APIs.
+
+- [ ] **Step 1: Add focused failing tests**
+
+Add tests proving:
+
+```java
+@Test
+void rejectsDuplicateActiveTaskForSameUser() {
+    PeriodicReplyService service = service(tempDir.resolve("tasks.json"));
+    service.create("u", "t", "DAILY", "08:00", "FIXED", "提醒吃药");
+
+    IllegalStateException ex = assertThrows(IllegalStateException.class,
+            () -> service.create("u", "t2", "DAILY", "08:00", "FIXED", "提醒吃药"));
+
+    assertTrue(ex.getMessage().contains("已存在"));
+}
+
+@Test
+void listShowsNextRunTimeWithoutToken() {
+    PeriodicReplyService service = service(tempDir.resolve("tasks.json"));
+    service.create("u", "secret-token", "DAILY", "08:00", "FIXED", "提醒吃药");
+
+    String result = service.listPeriodicReplies(toolContext("u", "secret-token"));
+
+    assertTrue(result.contains("下次"));
+    assertFalse(result.contains("secret-token"));
+}
+```
+
+- [ ] **Step 2: Implement the smallest production change**
+
+In `PeriodicReplyService.create(...)`, before assigning the next id, reject an active task for the same `userId` when `scheduleType`, `scheduleValue`, `mode`, and `content` are equal after normalization.
+
+In `describe(...)`, append a short `下次 yyyy-MM-dd HH:mm` display based on `nextRunAt` and `Asia/Shanghai`. Do not expose `contextToken`.
+
+Improve the `createPeriodicReply` tool description to include common Chinese examples:
+
+```text
+每天 8 点 => DAILY + 08:00
+每周一 9 点 => WEEKLY + MONDAY@09:00
+每隔 2 小时 => INTERVAL + PT2H
+```
+
+- [ ] **Step 3: Verify**
+
+Run:
+
+```powershell
+.\mvnw.cmd -Dmaven.test.skip=true compile
+```
+
+Run selected periodic tests using the existing JUnit launcher workaround if full Maven test compilation is still blocked by unrelated legacy tests.
+
+- [ ] **Step 4: Commit and push**
+
+Commit only the changed source/test/plan files. Do not include `.idea/*` local files.
