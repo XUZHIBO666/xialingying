@@ -49,6 +49,7 @@ public class AIService {
     private final VoiceReplyTool voiceReplyTool;
     private final WebSearchTool webSearchTool;
     private final EmailTool emailTool;
+    private final ScheduledTaskTool scheduledTaskTool;
     private final VectorMemoryStore vectorMemoryStore;
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
@@ -61,6 +62,7 @@ public class AIService {
                      VoiceReplyTool voiceReplyTool,
                      WebSearchTool webSearchTool,
                      EmailTool emailTool,
+                     ScheduledTaskTool scheduledTaskTool,
                      VectorMemoryStore vectorMemoryStore) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
@@ -70,6 +72,7 @@ public class AIService {
         this.voiceReplyTool=voiceReplyTool;
         this.webSearchTool=webSearchTool;
         this.emailTool = emailTool;
+        this.scheduledTaskTool = scheduledTaskTool;
         this.vectorMemoryStore = vectorMemoryStore;
     }
 
@@ -113,7 +116,7 @@ public class AIService {
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
-                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool))
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool,scheduledTaskTool))
                 .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore))
                 .interceptors(new MemoryContextInterceptor())
                 .build();
