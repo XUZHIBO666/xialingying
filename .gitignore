@@ -4,4 +4,5 @@ my-shop/
 局部截图_*.png
 logs/
 target/
+data/
 src/main/resources/application-local.yml

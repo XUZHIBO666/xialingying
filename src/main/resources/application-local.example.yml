@@ -5,6 +5,8 @@
 ai:
   memory:
     file: ./data/conversation-memory.json
+  periodic-reply:
+    file: ./data/periodic-replies.json
   api:
     key: your-api-key-here
   image:

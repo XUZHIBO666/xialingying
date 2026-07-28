@@ -5,10 +5,12 @@ import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.hook.AgentHook;
 import com.alibaba.cloud.ai.graph.agent.hook.HookPosition;
 import com.alibaba.cloud.ai.graph.agent.hook.HookPositions;
+import com.demo.demo.Service.PeriodicReplyService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,9 +29,13 @@ public class MemoryAgentHook extends AgentHook {
     public static final String MEMORY_CONTEXT_KEY = "memory_context";
 
     private final VectorMemoryStore vectorMemoryStore;
+    private final PeriodicReplyService periodicReplyService;
 
-    public MemoryAgentHook(VectorMemoryStore vectorMemoryStore) {
+    public MemoryAgentHook(
+            VectorMemoryStore vectorMemoryStore,
+            PeriodicReplyService periodicReplyService) {
         this.vectorMemoryStore = vectorMemoryStore;
+        this.periodicReplyService = periodicReplyService;
     }
 
     @Override
@@ -41,43 +47,58 @@ public class MemoryAgentHook extends AgentHook {
     public CompletableFuture<Map<String, Object>> beforeAgent(
             OverAllState state, RunnableConfig config) {
 
-        // ---- 1. 取 userId ----
-        String userId = config.metadata()
-                .map(meta -> (String) meta.get("user_id"))
-                .orElse(null);
-        if (userId == null) {
+        Map<String, Object> metadata = config.metadata().orElse(Map.of());
+        Object userValue = metadata.get("user_id");
+        if (!(userValue instanceof String userId) || userId.isBlank()) {
             return CompletableFuture.completedFuture(Map.of());
         }
+        Map<String, Object> update = new LinkedHashMap<>();
+        update.put("user_id", userId);
+        Object tokenValue = metadata.get("context_token");
+        if (tokenValue instanceof String token && !token.isBlank()) {
+            update.put("context_token", token);
+        }
 
-        // ---- 2. 从 state 提取最后一条用户消息作为查询 ----
         String userQuery = extractLastUserMessage(state);
-        if (userQuery.isEmpty()) {
-            return CompletableFuture.completedFuture(Map.of());
+
+        List<String> vectorMemories = List.of();
+        if (!userQuery.isEmpty()) {
+            try {
+                vectorMemories = vectorMemoryStore.retrieveRelevant(userId, userQuery);
+            } catch (Exception e) {
+                log.warn("[MemoryHook] 向量记忆检索失败 error={}",
+                        e.getClass().getSimpleName());
+            }
         }
 
-        // ---- 3. 向量语义检索 ----
-        List<String> vectorMemories;
+        String periodicSummary = "";
         try {
-            vectorMemories = vectorMemoryStore.retrieveRelevant(userId, userQuery);
+            periodicSummary = periodicReplyService.activeTaskSummary(userId);
         } catch (Exception e) {
-            log.warn("[MemoryHook] 向量记忆检索失败: {}", e.getMessage());
-            return CompletableFuture.completedFuture(Map.of());
+            log.warn("[MemoryHook] 周期任务读取失败 error={}",
+                    e.getClass().getSimpleName());
         }
 
-        if (vectorMemories.isEmpty()) {
-            return CompletableFuture.completedFuture(Map.of());
-        }
-
-        // ---- 4. 拼接上下文 ----
         StringBuilder sb = new StringBuilder();
-        sb.append("【语义相关记忆】\n");
-        vectorMemories.forEach(m -> sb.append("- ").append(m).append("\n"));
-        String context = sb.toString().trim();
+        if (!vectorMemories.isEmpty()) {
+            sb.append("【语义相关记忆】\n");
+            vectorMemories.forEach(memory ->
+                    sb.append("- ").append(memory).append('\n'));
+        }
+        if (periodicSummary != null && !periodicSummary.isBlank()) {
+            if (!sb.isEmpty()) {
+                sb.append('\n');
+            }
+            sb.append(periodicSummary);
+        }
+        if (!sb.isEmpty()) {
+            update.put(MEMORY_CONTEXT_KEY, sb.toString().trim());
+        }
 
-        log.info("[MemoryHook] userId={} vector={}条",
-                maskUserId(userId), vectorMemories.size());
-        return CompletableFuture.completedFuture(
-                Map.of(MEMORY_CONTEXT_KEY, context));
+        log.info("[MemoryHook] userId={} vector={} periodic={}",
+                maskUserId(userId), vectorMemories.size(),
+                periodicSummary != null && !periodicSummary.isBlank());
+        return CompletableFuture.completedFuture(Map.copyOf(update));
     }
 
     // ---- 内部 ----
