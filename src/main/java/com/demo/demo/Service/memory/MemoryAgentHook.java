@@ -17,12 +17,8 @@ import java.util.concurrent.CompletableFuture;
 /**
  * 在 ReactAgent 开始时检索长期记忆（只执行一次）。
  *
- * <p>检索来源：
- * <ol>
- *   <li>{@link VectorMemoryStore} — MySQL 向量语义检索</li>
- *   <li>{@link ConversationMemoryStore} — JSON 文件最近对话历史</li>
- * </ol>
- * 结果存入 OverAllState，由 {@link MemoryContextInterceptor} 在每次模型调用时注入 system prompt。
+ * <p>检索来源：{@link VectorMemoryStore} — SQLite 向量语义检索。
+ * <p>结果存入 OverAllState，由 {@link MemoryContextInterceptor} 在每次模型调用时注入 system prompt。
  */
 @Slf4j
 @HookPositions({HookPosition.BEFORE_AGENT})
@@ -31,13 +27,9 @@ public class MemoryAgentHook extends AgentHook {
     public static final String MEMORY_CONTEXT_KEY = "memory_context";
 
     private final VectorMemoryStore vectorMemoryStore;
-    private final ConversationMemoryStore conversationMemoryStore;
-    private static final int HISTORY_MAX_PAIRS = 5;
 
-    public MemoryAgentHook(VectorMemoryStore vectorMemoryStore,
-                           ConversationMemoryStore conversationMemoryStore) {
+    public MemoryAgentHook(VectorMemoryStore vectorMemoryStore) {
         this.vectorMemoryStore = vectorMemoryStore;
-        this.conversationMemoryStore = conversationMemoryStore;
     }
 
     @Override
@@ -64,35 +56,28 @@ public class MemoryAgentHook extends AgentHook {
         }
 
         // ---- 3. 向量语义检索 ----
-        List<String> vectorMemories = vectorMemoryStore.retrieveRelevant(userId, userQuery);
+        List<String> vectorMemories;
+        try {
+            vectorMemories = vectorMemoryStore.retrieveRelevant(userId, userQuery);
+        } catch (Exception e) {
+            log.warn("[MemoryHook] 向量记忆检索失败: {}", e.getMessage());
+            return CompletableFuture.completedFuture(Map.of());
+        }
 
-        // ---- 4. 最近对话历史 ----
-        List<ConversationMessage> history = conversationMemoryStore.getHistory(userId);
-        List<String> historyLines = history.stream()
-                .skip(Math.max(0, history.size() - HISTORY_MAX_PAIRS * 2L))
-                .map(m -> "[" + m.role() + "]: " + m.content())
-                .toList();
+        if (vectorMemories.isEmpty()) {
+            return CompletableFuture.completedFuture(Map.of());
+        }
 
-        // ---- 5. 拼接上下文 ----
+        // ---- 4. 拼接上下文 ----
         StringBuilder sb = new StringBuilder();
-        if (!historyLines.isEmpty()) {
-            sb.append("【最近对话】\n");
-            historyLines.forEach(line -> sb.append(line).append("\n"));
-        }
-        if (!vectorMemories.isEmpty()) {
-            sb.append("\n【语义相关记忆】\n");
-            vectorMemories.forEach(m -> sb.append("- ").append(m).append("\n"));
-        }
-
+        sb.append("【语义相关记忆】\n");
+        vectorMemories.forEach(m -> sb.append("- ").append(m).append("\n"));
         String context = sb.toString().trim();
-        if (!context.isEmpty()) {
-            log.info("[MemoryHook] userId={} history={}条 vector={}条",
-                    maskUserId(userId), historyLines.size(), vectorMemories.size());
-            return CompletableFuture.completedFuture(
-                    Map.of(MEMORY_CONTEXT_KEY, context));
-        }
 
-        return CompletableFuture.completedFuture(Map.of());
+        log.info("[MemoryHook] userId={} vector={}条",
+                maskUserId(userId), vectorMemories.size());
+        return CompletableFuture.completedFuture(
+                Map.of(MEMORY_CONTEXT_KEY, context));
     }
 
     // ---- 内部 ----
