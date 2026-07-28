@@ -6,6 +6,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -74,6 +75,7 @@ public class PeriodicReplyService {
     private volatile TaskSender sender = (userId, contextToken, text) -> {
     };
 
+    @Autowired
     public PeriodicReplyService(
             @Value("${ai.periodic-reply.file:./data/periodic-replies.json}") String file,
             ObjectMapper objectMapper) {

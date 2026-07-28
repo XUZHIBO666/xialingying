@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -124,6 +125,13 @@ class PeriodicReplyServiceTest {
         assertNotNull(PeriodicReplyService.class
                 .getMethod("cancelPeriodicReply", Integer.class, ToolContext.class)
                 .getAnnotation(Tool.class));
+    }
+
+    @Test
+    void productionConstructorIsMarkedForSpringInjection() throws Exception {
+        assertNotNull(PeriodicReplyService.class
+                .getConstructor(String.class, ObjectMapper.class)
+                .getAnnotation(Autowired.class));
     }
 
     @Test
