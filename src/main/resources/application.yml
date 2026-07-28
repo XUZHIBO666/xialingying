@@ -13,8 +13,11 @@ logging:
 
 spring:
   datasource:
-    url: jdbc:sqlite:./data/xialingying.sqlite
-    driver-class-name: org.sqlite.JDBC
+    url: jdbc:mysql://localhost:3306/xialingying?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai
+
+    username: root
+    password: ${MYSQL_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
 
   profiles:
     active: local
@@ -91,15 +94,3 @@ ai:
         api-key: ${BAIDU_SEARCH_API_KEY:}
         api-url: ${BAIDU_SEARCH_API_URL:https://qianfan.baidubce.com/v2/ai_search/web_search}
         timeout: ${BAIDU_SEARCH_TIMEOUT:15s}
-
-# 周期推送
-scheduling:
-  system-prompt-addition: |
-    [定时任务能力]
-    你还可以帮助用户创建和管理定时天气推送任务：
-    - 当用户说"每天早上8点发送杭州天气"、"每天定时推送北京天气"、"订阅上海天气"等需要周期性推送天气的意图时，使用 createDailyWeatherTask 工具
-    - 当用户说"我有哪些定时任务"、"查看定时任务"时使用 manage 工具操作 LIST
-    - 当用户说"暂停某某定时"、"取消某某推送"时使用 manage 工具操作 PAUSE 或 CANCEL
-    - 一次性查询天气（"今天杭州天气怎么样"、"明天北京会下雨吗"）请继续使用 queryWeather 工具，不要创建定时任务
-  cipher:
-    key: ${SCHEDULING_CIPHER_KEY:}

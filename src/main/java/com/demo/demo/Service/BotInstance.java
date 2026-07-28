@@ -653,36 +653,6 @@ public class BotInstance {
         return "";
     }
 
-    /**
-     * Send a text message with an observable result (success/failure + error code).
-     * Unlike {@link #sendReply}, this does NOT log message content.
-     *
-     * @return a result indicating success or a specific error category
-     */
-    public PushResult sendTextWithResult(String toUserId, String contextToken, String text) {
-        if (!loggedIn) {
-            log.warn("[{}] 推送失败：未登录", this.instanceId);
-            return PushResult.failed("BOT_OFFLINE");
-        }
-        try {
-            client.sendTextMessage(credentials.get(), toUserId, contextToken, text);
-            log.info("[{}] 推送成功 to={}", this.instanceId, maskUserId(toUserId));
-            return PushResult.ok();
-        } catch (com.lth.wechat.ilink.exception.ILinkSessionExpiredException e) {
-            log.warn("[{}] 推送失败：会话过期 to={}", this.instanceId, maskUserId(toUserId));
-            return PushResult.failed("SESSION_EXPIRED");
-        } catch (Exception e) {
-            log.error("[{}] 推送失败: {} to={}", this.instanceId, e.getMessage(), maskUserId(toUserId));
-            return PushResult.failed("SDK_ERROR");
-        }
-    }
-
-    /** Simple observable push result used by scheduled sends. */
-    public record PushResult(boolean success, String errorCode) {
-        public static PushResult ok() { return new PushResult(true, null); }
-        public static PushResult failed(String errorCode) { return new PushResult(false, errorCode); }
-    }
-
     public boolean sendManualReply(String replyId, String text) {
         ReplyTarget target = replyTargets.get(replyId);
         if (target == null) {

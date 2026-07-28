@@ -13,10 +13,6 @@ import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.memory.MemoryAgentHook;
 import com.demo.demo.Service.memory.MemoryContextInterceptor;
 import com.demo.demo.Service.memory.VectorMemoryStore;
-import com.demo.demo.Service.messaging.AgentCallerContext;
-import com.demo.demo.Service.scheduling.tool.CreateScheduledTaskTool;
-import com.demo.demo.Service.scheduling.tool.ManageScheduledTaskTool;
-import com.demo.demo.Service.scheduling.tool.TrustedToolContextInterceptor;
 import com.demo.demo.Service.tool.*;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -44,8 +40,6 @@ public class AIService {
     private String apiKey;
     @Value("${ai.system-prompt}")
     private String systemPrompt;
-    @Value("${scheduling.system-prompt-addition:}")
-    private String schedulingPromptAddition;
     private ReactAgent agent;
     private final MemorySaver memorySaver;
     private final ContextManager contextManager;
@@ -55,9 +49,6 @@ public class AIService {
     private final VoiceReplyTool voiceReplyTool;
     private final WebSearchTool webSearchTool;
     private final EmailTool emailTool;
-    private final CreateScheduledTaskTool createScheduledTaskTool;
-    private final ManageScheduledTaskTool manageScheduledTaskTool;
-    private final TrustedToolContextInterceptor trustedToolContextInterceptor;
     private final VectorMemoryStore vectorMemoryStore;
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
@@ -70,21 +61,15 @@ public class AIService {
                      VoiceReplyTool voiceReplyTool,
                      WebSearchTool webSearchTool,
                      EmailTool emailTool,
-                     CreateScheduledTaskTool createScheduledTaskTool,
-                     ManageScheduledTaskTool manageScheduledTaskTool,
-                     TrustedToolContextInterceptor trustedToolContextInterceptor,
                      VectorMemoryStore vectorMemoryStore) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
         this.timeTool = timeTool;
         this.imageGenerationTool = imageGenerationTool;
-        this.voiceReplyTool = voiceReplyTool;
-        this.webSearchTool = webSearchTool;
+        this.voiceReplyTool=voiceReplyTool;
+        this.webSearchTool=webSearchTool;
         this.emailTool = emailTool;
-        this.createScheduledTaskTool = createScheduledTaskTool;
-        this.manageScheduledTaskTool = manageScheduledTaskTool;
-        this.trustedToolContextInterceptor = trustedToolContextInterceptor;
         this.vectorMemoryStore = vectorMemoryStore;
     }
 
@@ -123,56 +108,38 @@ public class AIService {
             }
         };
 
-        // Append scheduling instruction if configured
-        String fullSystemPrompt = systemPrompt;
-        if (schedulingPromptAddition != null && !schedulingPromptAddition.isBlank()) {
-            fullSystemPrompt = systemPrompt + "\n\n" + schedulingPromptAddition;
-        }
-
         this.agent = ReactAgent.builder()
                 .name("wechat_agent")
                 .model(chatModel)
-                .systemPrompt(fullSystemPrompt)
+                .systemPrompt(systemPrompt)
                 .saver(memorySaver)
-                .tools(ToolCallbacks.from(
-                        weatherTool, timeTool, imageGenerationTool, voiceReplyTool,
-                        webSearchTool, emailTool,
-                        createScheduledTaskTool, manageScheduledTaskTool))
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool))
                 .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore))
-                .interceptors(new MemoryContextInterceptor(), trustedToolContextInterceptor)
+                .interceptors(new MemoryContextInterceptor())
                 .build();
     }
 
     // ==================== 对话（ReactAgent 内置工具调用） ====================
 
-    /** 调用 AI 生成回复（无 caller context），失败时返回 null。 */
+    /** 调用 AI 生成回复，失败时返回 null。 */
     public String chat(String userId, String message) {
-        return chat(userId, message, null);
-    }
-
-    /**
-     * 调用 AI 生成回复，附带服务端可信 caller context。
-     * The caller's target ID is passed via {@link RunnableConfig} metadata
-     * so scheduling tools can read it from {@link TrustedToolContextInterceptor}.
-     */
-    public String chat(String userId, String message, AgentCallerContext callerContext) {
         if (!isConfigured()) {
             log.debug("[AI] API Key 未配置，跳过调用");
             return null;
         }
 
-        String targetId = callerContext != null ? callerContext.targetId() : null;
         Object lock = userLocks.computeIfAbsent(userId, ignored -> new Object());
         synchronized (lock) {
-            String reply = doChat(userId, message, targetId);
+            String reply = doChat(userId, message);
             if (reply != null) {
                 vectorMemoryStore.saveTurn(userId, message, reply);
             }
             return reply;
+
         }
     }
 
-    private String doChat(String userId, String message, String callerTargetId) {
+    private String doChat(String userId, String message) {
         log.info("[AI] 收到对话请求 userId={} messageLength={}",
                 maskUserId(userId), message == null ? 0 : message.length());
 
@@ -180,16 +147,11 @@ public class AIService {
         String enhancedSystem = contextManager.buildEnhancedSystemMessage(userId, systemPrompt);
 
         try {
-            RunnableConfig.Builder configBuilder = RunnableConfig.builder()
+            RunnableConfig runnableConfig = RunnableConfig.builder()
                     .threadId(userId)
                     .addMetadata("user_id", userId)
-                    .addMetadata("system_prompt", enhancedSystem);
-            if (callerTargetId != null) {
-                configBuilder.addMetadata(
-                        TrustedToolContextInterceptor.CALLER_TARGET_ID_KEY, callerTargetId);
-            }
-            RunnableConfig runnableConfig = configBuilder.build();
-
+                    .addMetadata("system_prompt", enhancedSystem)
+                    .build();
             AssistantMessage response = agent.call(message, runnableConfig);
             String reply = response.getText();
             if (reply == null || reply.isBlank()) {
