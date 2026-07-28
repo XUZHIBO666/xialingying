@@ -1,52 +1,52 @@
-# Periodic Reply MVP Implementation Plan
+# 周期回复 MVP 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供执行代理使用：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，逐项实施本计划。各步骤使用复选框（`- [ ]`）跟踪进度。
 
-**Goal:** Add persistent interval, daily, and weekly WeChat replies with fixed or Agent-generated content while adding only one production class.
+**目标：** 在只新增一个生产类的前提下，实现持久化的间隔、每日和每周微信周期回复，并同时支持固定内容和 Agent 动态生成内容。
 
-**Architecture:** A single `PeriodicReplyService` owns the nested task record, Agent tools, JSON persistence, scheduling, and trigger callbacks. `AIService` registers the tool and passes trusted user/context metadata; `MemoryAgentHook` adds active task summaries beside vector memories; `BotController` wires existing Agent and default-Bot operations into callbacks.
+**架构：** 单个 `PeriodicReplyService` 负责内嵌任务记录、Agent 工具、JSON 持久化、调度和触发回调。`AIService` 注册工具并传递可信的用户/上下文元数据；`MemoryAgentHook` 在向量记忆旁加入有效任务摘要；`BotController` 将现有 Agent 和默认 Bot 操作接入回调。
 
-**Tech Stack:** Java 21, Spring Boot, Spring AI Alibaba ReactAgent, Spring AI `@Tool`, Jackson, `java.time`, `ScheduledExecutorService`, JUnit 5, Mockito.
+**技术栈：** Java 21、Spring Boot、Spring AI Alibaba ReactAgent、Spring AI `@Tool`、Jackson、`java.time`、`ScheduledExecutorService`、JUnit 5、Mockito。
 
-## Global Constraints
+## 全局约束
 
-- Add exactly one production class: `src/main/java/com/demo/demo/Service/PeriodicReplyService.java`.
-- Keep `MessagesModelHook trimHook` unchanged.
-- Use `Asia/Shanghai`; support only `INTERVAL`, `DAILY`, and `WEEKLY`.
-- Support `FIXED` and `AGENT` task modes.
-- Bind the MVP to `MultiBotManager.getDefaultBot()` only.
-- JSON is the task source of truth; do not add a table, data source, Quartz, cron library, distributed lock, or parser class.
-- Keep at most 20 active tasks per user.
-- Never log `contextToken`, task/message bodies, media parameters, or external response bodies.
-- Mock Agent, iLink, embedding, and network activity in tests.
+- 只新增一个生产类：`src/main/java/com/demo/demo/Service/PeriodicReplyService.java`。
+- 保持 `MessagesModelHook trimHook` 不变。
+- 使用 `Asia/Shanghai`，只支持 `INTERVAL`、`DAILY` 和 `WEEKLY`。
+- 支持 `FIXED` 和 `AGENT` 两种任务模式。
+- MVP 只绑定 `MultiBotManager.getDefaultBot()`。
+- JSON 是任务事实源；不新增数据表、数据源、Quartz、cron 库、分布式锁或解析器类。
+- 每个用户最多保留 20 个有效任务。
+- 禁止记录 `contextToken`、任务/消息正文、媒体参数或外部响应正文。
+- 测试中模拟 Agent、iLink、嵌入模型和网络活动。
 
-## File Map
+## 文件改动表
 
-- Create `src/main/java/com/demo/demo/Service/PeriodicReplyService.java`: nested task model, tools, persistence, schedule calculation, scan loop, callbacks, summaries.
-- Create `src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java`: deterministic service, persistence, scheduling, concurrency, and privacy tests.
-- Modify `src/main/java/com/demo/demo/Service/AIService.java`: inject/register service, pass trusted tool context, construct enhanced memory Hook.
-- Modify `src/main/java/com/demo/demo/Service/memory/MemoryAgentHook.java`: merge vector memory and active periodic-task summary independently.
-- Create `src/test/java/com/demo/demo/Service/memory/MemoryAgentHookTest.java`: verify independent memory sources.
-- Modify `src/main/java/com/demo/demo/controller/BotController.java`: pass `contextToken` into AI calls and wire callbacks.
-- Modify `src/main/resources/application.yml`: configure the task file.
-- Modify `src/main/resources/application-local.example.yml`: document the local path.
+- 新建 `src/main/java/com/demo/demo/Service/PeriodicReplyService.java`：内嵌任务模型、工具、持久化、时间计算、扫描循环、回调和摘要。
+- 新建 `src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java`：确定性的服务、持久化、调度、并发和隐私测试。
+- 修改 `src/main/java/com/demo/demo/Service/AIService.java`：注入并注册服务、传递可信工具上下文、构造增强后的记忆 Hook。
+- 修改 `src/main/java/com/demo/demo/Service/memory/MemoryAgentHook.java`：独立合并向量记忆和有效周期任务摘要。
+- 新建 `src/test/java/com/demo/demo/Service/memory/MemoryAgentHookTest.java`：验证两个独立记忆来源。
+- 修改 `src/main/java/com/demo/demo/controller/BotController.java`：把 `contextToken` 传给 AI 调用并连接回调。
+- 修改 `src/main/resources/application.yml`：配置任务文件。
+- 修改 `src/main/resources/application-local.example.yml`：记录本地路径。
 
 ---
 
-### Task 1: Persistent task CRUD and calendar calculations
+### 任务 1：任务持久化 CRUD 与日历时间计算
 
-**Files:**
-- Create: `src/main/java/com/demo/demo/Service/PeriodicReplyService.java`
-- Create: `src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java`
+**文件：**
+- 新建：`src/main/java/com/demo/demo/Service/PeriodicReplyService.java`
+- 新建：`src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java`
 
-**Interfaces:**
-- Produces: `PeriodicReplyService(Path, ObjectMapper, Clock)` package-private test constructor.
-- Produces: nested `PeriodicTask(int id, String userId, String contextToken, String scheduleType, String scheduleValue, String mode, String content, Instant nextRunAt, boolean enabled)`.
-- Produces: package-private `create(...)`, `list(String userId)`, `cancel(String userId, Integer taskId)`, and `nextRun(...)`.
+**接口：**
+- 产出：包级可见的测试构造器 `PeriodicReplyService(Path, ObjectMapper, Clock)`。
+- 产出：内嵌的 `PeriodicTask(int id, String userId, String contextToken, String scheduleType, String scheduleValue, String mode, String content, Instant nextRunAt, boolean enabled)`。
+- 产出：包级可见的 `create(...)`、`list(String userId)`、`cancel(String userId, Integer taskId)` 和 `nextRun(...)`。
 
-- [ ] **Step 1: Write failing tests for normalized next-run calculations**
+- [ ] **步骤 1：为规范化的下次执行时间计算编写失败测试**
 
-Add a fixed clock at `2026-07-28T00:30:00Z`, which is `08:30` in Shanghai:
+加入固定时钟 `2026-07-28T00:30:00Z`，对应上海时间 `08:30`：
 
 ```java
 private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
@@ -82,19 +82,19 @@ void rejectsUnsupportedOrNonFutureRules() {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and verify failure**
+- [ ] **步骤 2：运行聚焦测试并确认失败**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=PeriodicReplyServiceTest test
 ```
 
-Expected: compilation fails because `PeriodicReplyService` does not exist.
+预期：编译失败，因为 `PeriodicReplyService` 尚不存在。
 
-- [ ] **Step 3: Add the task record, constants, constructor, and time calculation**
+- [ ] **步骤 3：加入任务记录、常量、构造器和时间计算**
 
-Create the class with these exact core declarations:
+使用以下精确的核心声明创建类：
 
 ```java
 @Slf4j
@@ -135,14 +135,14 @@ public class PeriodicReplyService {
 }
 ```
 
-Implement `nextRun(String scheduleType, String scheduleValue, Instant after)` using:
+按以下规则实现 `nextRun(String scheduleType, String scheduleValue, Instant after)`：
 
-- `Duration.parse(scheduleValue)` for `INTERVAL`, rejecting zero/negative values.
-- `LocalTime.parse(scheduleValue)` for `DAILY`, choosing today only when strictly after `after`.
-- `DayOfWeek.valueOf(...)` and `TemporalAdjusters.nextOrSame(...)` for `WEEKLY`, moving one week when the candidate is not strictly after `after`.
-- `ZonedDateTime.of(..., ZONE).toInstant()` for calendar conversion.
+- `INTERVAL` 使用 `Duration.parse(scheduleValue)`，拒绝零值和负值。
+- `DAILY` 使用 `LocalTime.parse(scheduleValue)`；只有当天候选时间严格晚于 `after` 时才选择当天。
+- `WEEKLY` 使用 `DayOfWeek.valueOf(...)` 和 `TemporalAdjusters.nextOrSame(...)`；若候选时间不严格晚于 `after`，则推进一周。
+- 日历时间转换使用 `ZonedDateTime.of(..., ZONE).toInstant()`。
 
-- [ ] **Step 4: Add failing CRUD, file, restart, limit, and cancellation tests**
+- [ ] **步骤 4：加入 CRUD、文件、重启、上限和取消行为的失败测试**
 
 ```java
 @Test
@@ -185,62 +185,62 @@ void enforcesTwentyTaskLimitPerUser() {
 }
 ```
 
-- [ ] **Step 5: Implement validation, CRUD, and atomic JSON persistence**
+- [ ] **步骤 5：实现校验、CRUD 和 JSON 原子持久化**
 
-Use a versioned private snapshot record inside the same class:
+在同一个类中使用带版本号的私有快照记录：
 
 ```java
 private static final int FILE_VERSION = 1;
 private record TaskSnapshot(int version, List<PeriodicTask> tasks) {}
 ```
 
-Required behavior:
+必需行为：
 
-- Validate nonblank `userId`, `contextToken`, `content`.
-- Accept only the exact uppercase enum-like strings in the global constraints.
-- Call `nextRun(...)` before modifying memory.
-- Allocate `max(existing user IDs) + 1`.
-- Under `lock`, build a replacement list, persist that list, and only then replace `tasks`; a failed write must not leave memory ahead of disk.
-- Save through a sibling temporary file and `Files.move` with `ATOMIC_MOVE, REPLACE_EXISTING`, falling back to `REPLACE_EXISTING`.
-- Missing file loads empty.
-- Invalid file logs only path and exception type, never serialized data, and loads empty.
-- `list` returns `List.copyOf(...)`.
-- `cancel(userId, null)` cancels only when exactly one active task exists.
+- 校验 `userId`、`contextToken`、`content` 均为非空白字符串。
+- 只接受全局约束中精确的大写枚举式字符串。
+- 修改内存之前调用 `nextRun(...)`。
+- 编号分配为 `max(该用户已有任务编号) + 1`。
+- 在 `lock` 内构造替换列表，先持久化该列表，再替换 `tasks`；写入失败时，内存状态不得领先磁盘。
+- 先保存到同目录临时文件，再使用带 `ATOMIC_MOVE, REPLACE_EXISTING` 的 `Files.move`；不支持原子移动时退化为 `REPLACE_EXISTING`。
+- 文件缺失时加载为空。
+- 文件无效时只记录路径和异常类型，不记录序列化内容，并加载为空。
+- `list` 返回 `List.copyOf(...)`。
+- `cancel(userId, null)` 只在恰好存在一个有效任务时执行取消。
 
-- [ ] **Step 6: Run the focused test class**
+- [ ] **步骤 6：运行聚焦测试类**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=PeriodicReplyServiceTest test
 ```
 
-Expected: all Task 1 tests pass.
+预期：任务 1 的全部测试通过。
 
-- [ ] **Step 7: Commit the persistent CRUD slice**
+- [ ] **步骤 7：提交持久化 CRUD 切片**
 
 ```powershell
 git add src/main/java/com/demo/demo/Service/PeriodicReplyService.java src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java
-git commit -m "feat: persist periodic reply tasks"
+git commit -m "feat: 持久化周期回复任务"
 ```
 
 ---
 
-### Task 2: Agent tools, scan loop, and fixed/dynamic triggers
+### 任务 2：Agent 工具、扫描循环及固定/动态触发
 
-**Files:**
-- Modify: `src/main/java/com/demo/demo/Service/PeriodicReplyService.java`
-- Modify: `src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java`
+**文件：**
+- 修改：`src/main/java/com/demo/demo/Service/PeriodicReplyService.java`
+- 修改：`src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java`
 
-**Interfaces:**
-- Consumes: Task 1 CRUD and `PeriodicTask`.
-- Produces: `createPeriodicReply(...)`, `listPeriodicReplies(ToolContext)`, `cancelPeriodicReply(Integer, ToolContext)` Agent tools.
-- Produces: `configure(BooleanSupplier, Function<PeriodicTask, String>, TaskSender)`.
-- Produces: package-private `scanDueTasks()` and public `activeTaskSummary(String)`.
+**接口：**
+- 使用：任务 1 的 CRUD 和 `PeriodicTask`。
+- 产出：Agent 工具 `createPeriodicReply(...)`、`listPeriodicReplies(ToolContext)`、`cancelPeriodicReply(Integer, ToolContext)`。
+- 产出：`configure(BooleanSupplier, Function<PeriodicTask, String>, TaskSender)`。
+- 产出：包级可见的 `scanDueTasks()` 和公开的 `activeTaskSummary(String)`。
 
-- [ ] **Step 1: Write failing tool-context and summary tests**
+- [ ] **步骤 1：编写工具上下文和摘要的失败测试**
 
-Construct `ToolContext` with trusted values:
+用可信值构造 `ToolContext`：
 
 ```java
 private ToolContext toolContext(String userId, String contextToken) {
@@ -263,21 +263,21 @@ void toolUsesTrustedContextAndSummaryHidesToken() {
 }
 ```
 
-Reflect over all three public tool methods and assert each has `@Tool`; assert `ToolContext` is the last parameter so identity is not supplied by the model.
+反射检查三个公开工具方法，断言每个方法都有 `@Tool`；同时断言 `ToolContext` 是最后一个参数，确保身份信息不是由模型提供。
 
-- [ ] **Step 2: Run the focused tests and verify failure**
+- [ ] **步骤 2：运行聚焦测试并确认失败**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=PeriodicReplyServiceTest test
 ```
 
-Expected: compilation fails because the tool and summary methods do not exist.
+预期：编译失败，因为工具方法和摘要方法尚不存在。
 
-- [ ] **Step 3: Implement the three tools and formatted summaries**
+- [ ] **步骤 3：实现三个工具和格式化摘要**
 
-Use exact signatures:
+使用以下精确签名：
 
 ```java
 @Tool(description = "创建周期回复任务。scheduleType 仅可为 INTERVAL、DAILY、WEEKLY；"
@@ -296,11 +296,11 @@ public String listPeriodicReplies(ToolContext toolContext)
 public String cancelPeriodicReply(Integer taskId, ToolContext toolContext)
 ```
 
-Extract `user_id` and `context_token` only from `toolContext.getContext()`. Never accept them as model-visible string arguments. Return concise Chinese confirmations and lists. `activeTaskSummary` must return an empty string when the user has no active tasks.
+只能从 `toolContext.getContext()` 提取 `user_id` 和 `context_token`。不得把它们作为模型可见的字符串参数接收。返回简洁的中文确认信息和列表。用户没有有效任务时，`activeTaskSummary` 必须返回空字符串。
 
-- [ ] **Step 4: Write failing fixed, dynamic, offline, and overdue trigger tests**
+- [ ] **步骤 4：编写固定、动态、离线和逾期触发的失败测试**
 
-Use callback captures rather than real Bot or Agent:
+使用回调捕获结果，不调用真实 Bot 或 Agent：
 
 ```java
 @Test
@@ -337,7 +337,7 @@ void offlineBotLeavesTaskDueForRetry() {
 }
 ```
 
-Add this helper overload and a mutable test clock:
+加入以下辅助重载和可变测试时钟：
 
 ```java
 private PeriodicReplyService service(Path file, Clock clock) {
@@ -362,11 +362,11 @@ private static final class MutableClock extends Clock {
 }
 ```
 
-Add `overdueTaskFiresOnceAndAdvancesToFuture()`: create an hourly task, advance the mutable clock by five hours, call `scanDueTasks()` once, assert exactly one send, and assert the stored `nextRunAt` is strictly after the mutable clock's instant.
+加入 `overdueTaskFiresOnceAndAdvancesToFuture()`：创建每小时任务，将可变时钟推进五小时，调用一次 `scanDueTasks()`，断言只发送一次，并断言保存后的 `nextRunAt` 严格晚于可变时钟当前时间。
 
-- [ ] **Step 5: Implement callbacks, at-most-once scan, and lifecycle**
+- [ ] **步骤 5：实现回调、至多一次扫描语义和生命周期**
 
-Define one nested functional interface rather than another production file:
+定义一个内嵌函数式接口，不再新增生产文件：
 
 ```java
 @FunctionalInterface
@@ -375,7 +375,7 @@ public interface TaskSender {
 }
 ```
 
-Store:
+保存以下字段：
 
 ```java
 private volatile BooleanSupplier botLoggedIn = () -> false;
@@ -384,55 +384,55 @@ private volatile TaskSender sender = (userId, contextToken, text) -> {};
 private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(...);
 ```
 
-Implement `configure(...)` with `Objects.requireNonNull`. Add `@PostConstruct start()` using `scheduleWithFixedDelay(this::scanSafely, 30, 30, TimeUnit.SECONDS)` and `@PreDestroy stop()` using `shutdownNow()`.
+使用 `Objects.requireNonNull` 实现 `configure(...)`。加入 `@PostConstruct start()`，调用 `scheduleWithFixedDelay(this::scanSafely, 30, 30, TimeUnit.SECONDS)`；加入 `@PreDestroy stop()`，调用 `shutdownNow()`。
 
-`scanDueTasks()` must:
+`scanDueTasks()` 必须：
 
-1. Return without mutation when `botLoggedIn.getAsBoolean()` is false.
-2. Under `lock`, find due tasks, calculate each next future run, persist the full replacement list, then replace memory.
-3. Release `lock`.
-4. For each due snapshot, send fixed content or call `dynamicGenerator`.
-5. Substitute `本次周期任务生成失败，请稍后重试` when dynamic output is null/blank or generation throws.
-6. Catch each task's exception separately and log only masked user ID, task ID, and exception type.
+1. 当 `botLoggedIn.getAsBoolean()` 为 false 时直接返回，不修改状态。
+2. 在 `lock` 内查找到期任务，为每个任务计算未来的下次时间，持久化完整替换列表，然后替换内存状态。
+3. 释放 `lock`。
+4. 对每个到期快照发送固定内容，或调用 `dynamicGenerator`。
+5. 动态输出为 null/空白或生成过程抛出异常时，改用“本次周期任务生成失败，请稍后重试”。
+6. 分别捕获每个任务的异常，只记录掩码用户 ID、任务编号和异常类型。
 
-- [ ] **Step 6: Add concurrency and logging-privacy tests**
+- [ ] **步骤 6：加入并发和日志隐私测试**
 
-Create 20 concurrent tasks for one user through an executor, await all futures, reload the JSON, and assert 20 distinct IDs. Attach a Logback `ListAppender` and assert logs do not contain `secret-token` or a unique task body.
+通过执行器为同一用户并发创建 20 个任务，等待全部 Future 完成，重新加载 JSON，并断言存在 20 个不同编号。挂载 Logback `ListAppender`，断言日志不包含 `secret-token` 或具有唯一性的任务正文。
 
-- [ ] **Step 7: Run the focused tests**
+- [ ] **步骤 7：运行聚焦测试**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=PeriodicReplyServiceTest test
 ```
 
-Expected: all service tests pass without real network calls or sleeping.
+预期：全部服务测试通过，且没有真实网络调用或休眠等待。
 
-- [ ] **Step 8: Commit the tool and scheduler slice**
+- [ ] **步骤 8：提交工具和调度器切片**
 
 ```powershell
 git add src/main/java/com/demo/demo/Service/PeriodicReplyService.java src/test/java/com/demo/demo/Service/PeriodicReplyServiceTest.java
-git commit -m "feat: schedule periodic replies"
+git commit -m "feat: 调度周期回复"
 ```
 
 ---
 
-### Task 3: Merge active tasks into long-term Agent context
+### 任务 3：将有效任务合并进 Agent 长期上下文
 
-**Files:**
-- Modify: `src/main/java/com/demo/demo/Service/memory/MemoryAgentHook.java`
-- Create: `src/test/java/com/demo/demo/Service/memory/MemoryAgentHookTest.java`
+**文件：**
+- 修改：`src/main/java/com/demo/demo/Service/memory/MemoryAgentHook.java`
+- 新建：`src/test/java/com/demo/demo/Service/memory/MemoryAgentHookTest.java`
 
-**Interfaces:**
-- Consumes: `PeriodicReplyService.activeTaskSummary(String)`.
-- Produces: `MemoryAgentHook(VectorMemoryStore, PeriodicReplyService)`.
-- Preserves: `MemoryAgentHook.MEMORY_CONTEXT_KEY`.
-- Produces: trusted `user_id` and optional `context_token` state entries for Spring AI `ToolContext`.
+**接口：**
+- 使用：`PeriodicReplyService.activeTaskSummary(String)`。
+- 产出：`MemoryAgentHook(VectorMemoryStore, PeriodicReplyService)`。
+- 保持：`MemoryAgentHook.MEMORY_CONTEXT_KEY`。
+- 产出：供 Spring AI `ToolContext` 使用的可信 `user_id` 和可选 `context_token` 状态项。
 
-- [ ] **Step 1: Write failing independent-source tests**
+- [ ] **步骤 1：为独立数据源编写失败测试**
 
-Mock both dependencies. Build the state and config exactly as follows:
+模拟两个依赖，并按以下方式精确构造状态和配置：
 
 ```java
 OverAllState state = new OverAllState(Map.of(
@@ -467,7 +467,7 @@ void includesVectorMemoryWhenPeriodicLookupFails() {
 }
 ```
 
-- [ ] **Step 2: Write a failing trusted-context propagation test**
+- [ ] **步骤 2：编写可信上下文传播的失败测试**
 
 ```java
 @Test
@@ -479,19 +479,19 @@ void exposesTrustedIdentityToModelAndToolContext() {
 }
 ```
 
-- [ ] **Step 3: Run the Hook test and verify failure**
+- [ ] **步骤 3：运行 Hook 测试并确认失败**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=MemoryAgentHookTest test
 ```
 
-Expected: compilation fails because the constructor does not accept `PeriodicReplyService`.
+预期：编译失败，因为构造器尚不接收 `PeriodicReplyService`。
 
-- [ ] **Step 4: Implement independent retrieval and concatenation**
+- [ ] **步骤 4：实现独立检索与拼接**
 
-Change the constructor to:
+将构造器改为：
 
 ```java
 public MemoryAgentHook(
@@ -499,51 +499,51 @@ public MemoryAgentHook(
         PeriodicReplyService periodicReplyService)
 ```
 
-Start the returned update with the trusted `user_id` from `RunnableConfig.metadata()` and copy `context_token` only when it is a nonblank string. Retrieve vector memories and periodic summary in separate `try/catch` blocks. Add `memory_context` only when at least one memory section is nonblank. Return the trusted identity update even when both memory sources are empty. Keep logs content-free.
+返回的更新 Map 首先放入来自 `RunnableConfig.metadata()` 的可信 `user_id`；只有 `context_token` 是非空白字符串时才复制。分别在独立的 `try/catch` 块中检索向量记忆和周期任务摘要。仅当至少一个记忆区段非空白时加入 `memory_context`。即使两个记忆源均为空，也要返回可信身份更新。日志不得包含内容正文。
 
-Add system guidance to the periodic section:
+在周期任务区段加入系统指引：
 
 ```text
 这些任务是当前系统状态；不得虚构、重复创建或擅自取消。
 ```
 
-- [ ] **Step 5: Run the Hook and existing memory tests**
+- [ ] **步骤 5：运行 Hook 和现有记忆测试**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=MemoryAgentHookTest,AIServiceMemoryTest,ConversationMemoryStoreTest test
 ```
 
-Expected: all selected tests pass.
+预期：全部选定测试通过。
 
-- [ ] **Step 6: Commit the memory integration**
+- [ ] **步骤 6：提交记忆集成**
 
 ```powershell
 git add src/main/java/com/demo/demo/Service/memory/MemoryAgentHook.java src/test/java/com/demo/demo/Service/memory/MemoryAgentHookTest.java
-git commit -m "feat: inject periodic tasks into agent memory"
+git commit -m "feat: 将周期任务注入 Agent 记忆"
 ```
 
 ---
 
-### Task 4: Register tools and wire trusted WeChat context
+### 任务 4：注册工具并连接可信微信上下文
 
-**Files:**
-- Modify: `src/main/java/com/demo/demo/Service/AIService.java`
-- Modify: `src/main/java/com/demo/demo/controller/BotController.java`
-- Modify: `src/test/java/com/demo/demo/Service/AIServiceMemoryTest.java`
-- Modify: `src/test/java/com/demo/demo/Service/tool/ToolAnnotationTest.java`
+**文件：**
+- 修改：`src/main/java/com/demo/demo/Service/AIService.java`
+- 修改：`src/main/java/com/demo/demo/controller/BotController.java`
+- 修改：`src/test/java/com/demo/demo/Service/AIServiceMemoryTest.java`
+- 修改：`src/test/java/com/demo/demo/Service/tool/ToolAnnotationTest.java`
 
-**Interfaces:**
-- Consumes: `PeriodicReplyService` tool object and enhanced `MemoryAgentHook`.
-- Produces: `AIService.chat(String userId, String contextToken, String message)`.
-- Preserves: `AIService.chat(String userId, String message)` as a delegating overload.
+**接口：**
+- 使用：`PeriodicReplyService` 工具对象和增强后的 `MemoryAgentHook`。
+- 产出：`AIService.chat(String userId, String contextToken, String message)`。
+- 保持：`AIService.chat(String userId, String message)`，作为委托重载。
 
-- [ ] **Step 1: Update constructor tests to require the periodic service**
+- [ ] **步骤 1：更新构造器测试，要求传入周期服务**
 
-Mock `PeriodicReplyService`, pass it to every direct `AIService` construction, and add a reflection assertion that all three periodic tool methods carry `@Tool`.
+模拟 `PeriodicReplyService`，把它传给每一处直接构造的 `AIService`，并加入反射断言，确认三个周期工具方法均带有 `@Tool`。
 
-Add a test around the overload boundary:
+加入重载边界测试：
 
 ```java
 @Test
@@ -554,19 +554,19 @@ void legacyChatOverloadRemainsAvailable() throws Exception {
 }
 ```
 
-- [ ] **Step 2: Run selected tests and verify failure**
+- [ ] **步骤 2：运行选定测试并确认失败**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=AIServiceMemoryTest,ToolRegistryTest test
 ```
 
-Expected: failure because the new constructor/signature/tool registration is absent.
+预期：测试失败，因为新构造器、方法签名和工具注册尚不存在。
 
-- [ ] **Step 3: Inject and register `PeriodicReplyService`**
+- [ ] **步骤 3：注入并注册 `PeriodicReplyService`**
 
-Add a final field and constructor parameter. Register it with:
+加入 final 字段和构造器参数，并按以下方式注册：
 
 ```java
 .tools(ToolCallbacks.from(
@@ -575,11 +575,11 @@ Add a final field and constructor parameter. Register it with:
 .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore, periodicReplyService))
 ```
 
-Do not change `trimHook`.
+不得修改 `trimHook`。
 
-- [ ] **Step 4: Add the context-aware chat overload**
+- [ ] **步骤 4：加入感知上下文的 chat 重载**
 
-Keep compatibility:
+保持兼容：
 
 ```java
 public String chat(String userId, String message) {
@@ -587,11 +587,11 @@ public String chat(String userId, String message) {
 }
 
 public String chat(String userId, String contextToken, String message) {
-    // retain current per-user locking and vector save behavior
+    // 保留当前按用户加锁和向量记忆保存行为
 }
 ```
 
-Pass both trusted values through `RunnableConfig` metadata. `MemoryAgentHook` copies these values into Agent state, which is the context exposed to Spring AI tool callbacks:
+通过 `RunnableConfig` 元数据传递两个可信值。`MemoryAgentHook` 将它们复制到 Agent 状态，该状态会作为上下文暴露给 Spring AI 工具回调：
 
 ```java
 var builder = RunnableConfig.builder()
@@ -603,17 +603,17 @@ if (contextToken != null && !contextToken.isBlank()) {
 }
 ```
 
-Never log the raw token.
+不得记录原始 token。
 
-- [ ] **Step 5: Wire controller calls and periodic callbacks**
+- [ ] **步骤 5：连接控制器调用和周期回调**
 
-In the shared auto-reply callback, change normal and image-derived Agent calls to:
+在共享自动回复回调中，把普通消息和图片派生的 Agent 调用改为：
 
 ```java
 aiService.chat(fromUser, contextToken, text)
 ```
 
-At the end of `initAutoReply()`, configure:
+在 `initAutoReply()` 末尾进行以下配置：
 
 ```java
 periodicReplyService.configure(
@@ -623,99 +623,99 @@ periodicReplyService.configure(
                 multiBotManager.getDefaultBot().sendReply(userId, contextToken, content));
 ```
 
-Inject `PeriodicReplyService` into `BotController` using the existing repository style.
+按照仓库现有风格把 `PeriodicReplyService` 注入 `BotController`。
 
-- [ ] **Step 6: Run selected integration tests**
+- [ ] **步骤 6：运行选定的集成测试**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=AIServiceMemoryTest,ToolRegistryTest,UserMessageSerializationTest,VoiceMessageReplyTest,ImageAutoReplyTest test
 ```
 
-Expected: all selected tests pass and no external calls occur.
+预期：全部选定测试通过，且不发生外部调用。
 
-- [ ] **Step 7: Commit Agent and controller wiring**
+- [ ] **步骤 7：提交 Agent 和控制器连接改动**
 
 ```powershell
 git add src/main/java/com/demo/demo/Service/AIService.java src/main/java/com/demo/demo/controller/BotController.java src/test/java/com/demo/demo/Service/AIServiceMemoryTest.java src/test/java/com/demo/demo/Service/tool/ToolAnnotationTest.java
-git commit -m "feat: wire periodic reply tools"
+git commit -m "feat: 接入周期回复工具"
 ```
 
 ---
 
-### Task 5: Configuration, regression verification, and manual handoff
+### 任务 5：配置、回归验证和人工交接
 
-**Files:**
-- Modify: `src/main/resources/application.yml`
-- Modify: `src/main/resources/application-local.example.yml`
-- Modify: `docs/wechat-test-guide.md`
+**文件：**
+- 修改：`src/main/resources/application.yml`
+- 修改：`src/main/resources/application-local.example.yml`
+- 修改：`docs/wechat-test-guide.md`
 
-**Interfaces:**
-- Consumes: property `ai.periodic-reply.file`.
-- Produces: environment override `PERIODIC_REPLY_FILE`.
+**接口：**
+- 使用：配置项 `ai.periodic-reply.file`。
+- 产出：环境变量覆盖项 `PERIODIC_REPLY_FILE`。
 
-- [ ] **Step 1: Add configuration**
+- [ ] **步骤 1：加入配置**
 
-Under `ai:` in `application.yml` add:
+在 `application.yml` 的 `ai:` 下加入：
 
 ```yaml
   periodic-reply:
     file: ${PERIODIC_REPLY_FILE:./data/periodic-replies.json}
 ```
 
-Add the non-secret local example:
+加入不含秘密信息的本地示例：
 
 ```yaml
   periodic-reply:
     file: ./data/periodic-replies.json
 ```
 
-- [ ] **Step 2: Add concise manual test cases**
+- [ ] **步骤 2：加入简洁的人工测试用例**
 
-Document these exact checks in `docs/wechat-test-guide.md`:
+在 `docs/wechat-test-guide.md` 中记录以下精确检查：
 
-1. “每天 8 点提醒我吃药” creates a fixed task and returns its number.
-2. “每周一 9 点总结本周计划并发给我” creates an Agent task.
-3. “查看周期任务” lists both without internal tokens.
-4. “取消任务 1” removes only task 1.
-5. Restart reloads remaining tasks.
-6. A due task while logged out waits; after login it sends once.
-7. Verify long-delay sending manually because iLink `contextToken` lifetime is not proven by unit tests.
+1. “每天 8 点提醒我吃药”创建固定任务并返回任务编号。
+2. “每周一 9 点总结本周计划并发给我”创建 Agent 动态任务。
+3. “查看周期任务”列出两个任务，但不包含内部 token。
+4. “取消任务 1”只删除任务 1。
+5. 重启后重新加载剩余任务。
+6. 用户未登录时到期任务保持等待；登录后只发送一次。
+7. 人工验证长周期延迟发送，因为单元测试无法证明 iLink `contextToken` 的生命周期。
 
-- [ ] **Step 3: Run focused tests**
+- [ ] **步骤 3：运行聚焦测试**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd -Dtest=PeriodicReplyServiceTest,MemoryAgentHookTest,AIServiceMemoryTest,ToolRegistryTest test
 ```
 
-Expected: all focused tests pass.
+预期：全部聚焦测试通过。
 
-- [ ] **Step 4: Run the complete test suite**
+- [ ] **步骤 4：运行完整测试套件**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd test
 ```
 
-Expected: Maven exits with code 0 and reports no failures or errors.
+预期：Maven 以代码 0 退出，且没有失败或错误。
 
-- [ ] **Step 5: Build the application**
+- [ ] **步骤 5：构建应用**
 
-Run:
+运行：
 
 ```powershell
 .\mvnw.cmd clean package
 ```
 
-Expected: `BUILD SUCCESS`.
+预期：输出 `BUILD SUCCESS`。
 
-- [ ] **Step 6: Inspect scope and whitespace**
+- [ ] **步骤 6：检查范围和空白字符**
 
-Run:
+运行：
 
 ```powershell
 git diff --check
@@ -724,20 +724,20 @@ git diff --stat
 git diff --name-only
 ```
 
-Expected:
+预期：
 
-- No whitespace errors.
-- Exactly one new production Java class.
-- No database migration, SQLite configuration, Quartz/cron dependency, or unrelated refactor.
-- `MessagesModelHook trimHook` body remains unchanged.
+- 没有空白字符错误。
+- 恰好只新增一个生产 Java 类。
+- 没有数据库迁移、SQLite 配置、Quartz/cron 依赖或无关重构。
+- `MessagesModelHook trimHook` 方法体保持不变。
 
-- [ ] **Step 7: Commit configuration and documentation**
+- [ ] **步骤 7：提交配置和文档**
 
 ```powershell
 git add src/main/resources/application.yml src/main/resources/application-local.example.yml docs/wechat-test-guide.md
-git commit -m "docs: configure periodic replies"
+git commit -m "docs: 配置周期回复"
 ```
 
-- [ ] **Step 8: Record deferred manual verification**
+- [ ] **步骤 8：记录延期的人工验证**
 
-In the implementation handoff, explicitly state that a real logged-in WeChat account must verify whether an old iLink `contextToken` remains usable across the longest intended reminder interval. Do not claim proactive long-delay delivery is proven until that check succeeds.
+在实施交接中明确说明：必须使用真实已登录微信账号，验证旧 iLink `contextToken` 在计划支持的最长提醒间隔后是否仍可使用。在该检查成功之前，不得声称已证明长延迟主动发送可用。
