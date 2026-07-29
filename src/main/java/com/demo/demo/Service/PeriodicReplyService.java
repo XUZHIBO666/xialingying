@@ -39,51 +39,54 @@ import java.util.function.Function;
 @Slf4j
 @Service
 public class PeriodicReplyService {
-
+    // 按照中国的标准时间
     static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
+    // 每个用户最多创建20个任务
     static final int MAX_TASKS_PER_USER = 20;
+    // 任务文件版本
     private static final int FILE_VERSION = 1;
+    // 下次执行时间的显示格式
     private static final DateTimeFormatter NEXT_RUN_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-
+    // 代表一条周期任务，是一个不可变数据类
     public record PeriodicTask(
-            int id,
-            String userId,
-            String contextToken,
-            String scheduleType,
-            String scheduleValue,
-            String mode,
-            String content,
-            Instant nextRunAt,
-            boolean enabled) {
+            int id,//任务编号
+            String userId,//目标用户的ILink userId
+            String contextToken,//ILink 会话令牌
+            String scheduleType,//周期类型
+            String scheduleValue,//周期值
+            String mode,//模式
+            String content,//内容
+            Instant nextRunAt,//下次执行时间
+            boolean enabled) {//是否启用
     }
 
     private record TaskSnapshot(int version, List<PeriodicTask> tasks) {
-    }
+    }// 任务记录
 
     @FunctionalInterface
     public interface TaskSender {
         void send(String userId, String contextToken, String text);
     }
 
-    private final Path taskFile;
-    private final ObjectMapper objectMapper;
-    private final Clock clock;
-    private final Object lock = new Object();
-    private final List<PeriodicTask> tasks = new ArrayList<>();
-    private final ScheduledExecutorService scheduler;
+    private final Path taskFile;//文件路径
+    private final ObjectMapper objectMapper;//JSON序列化工具
+    private final Clock clock;//获得当前时间，固定一个时间
+    private final Object lock = new Object();//同步锁
+    private final List<PeriodicTask> tasks = new ArrayList<>();//内存中的任务列表
+    private final ScheduledExecutorService scheduler;//单线程调度器，30秒扫描一次到期任务
 
-    private volatile BooleanSupplier botLoggedIn = () -> false;
-    private volatile Function<PeriodicTask, String> dynamicGenerator = task -> null;
+    private volatile BooleanSupplier botLoggedIn = () -> false;//"机器人是否已登录"的检查函数，由外部注入。volatile 保证多线程可见性。默认返回 false
+    private volatile Function<PeriodicTask, String> dynamicGenerator = task -> null;//"动态内容生成器"，当任务模式为 AGENT 时，调用此函数让 AI 根据 prompt 生成实际发送内容。默认返回 null。
     private volatile TaskSender sender = (userId, contextToken, text) -> {
-    };
+    };//消息发送器，默认是空操作。由 configure() 方法注入真实实现。
 
     @Autowired
     public PeriodicReplyService(
             @Value("${ai.periodic-reply.file:./data/periodic-replies.json}") String file,
             ObjectMapper objectMapper) {
         this(Path.of(file), objectMapper, Clock.systemUTC());
-    }
+    }//Spring 注入用的公开构造函数：从配置文件读取 JSON 文件路径（默认 ./data/periodic-replies.json），使用系统 UTC 时钟。
 
     PeriodicReplyService(Path file, ObjectMapper objectMapper, Clock clock) {
         this.taskFile = file.toAbsolutePath();
@@ -95,7 +98,7 @@ public class PeriodicReplyService {
             return thread;
         });
         load();
-    }
+    }//包级可见的构造函数
 
     Instant nextRun(String scheduleType, String scheduleValue, Instant after) {
         String type = normalize(scheduleType);
@@ -105,9 +108,9 @@ public class PeriodicReplyService {
             case "WEEKLY" -> nextWeekly(scheduleValue, after);
             default -> throw new IllegalArgumentException("不支持的周期类型: " + scheduleType);
         };
-    }
+    }//确定周期回复类型，以及下一次执行时间
 
-    PeriodicTask create(
+    PeriodicTask create(//创建任务
             String userId,
             String contextToken,
             String scheduleType,
@@ -118,7 +121,7 @@ public class PeriodicReplyService {
         requireText(contextToken, "contextToken");
         requireText(content, "content");
         String normalizedType = normalize(scheduleType);
-        String normalizedMode = normalize(mode);
+        String normalizedMode = normalize(mode);//统一转大写去空白
         if (!List.of("FIXED", "AGENT").contains(normalizedMode)) {
             throw new IllegalArgumentException("不支持的任务模式: " + mode);
         }
@@ -336,7 +339,9 @@ public class PeriodicReplyService {
         if (toolContext == null) {
             throw new IllegalArgumentException("缺少可信工具上下文");
         }
-        Object value = toolContext.getContext().get(key);
+        Map<String, Object> ctx = toolContext.getContext();
+        log.info("[周期任务] ToolContext 内容: {}", ctx.keySet());
+        Object value = ctx.get(key);
         if (!(value instanceof String text) || text.isBlank()) {
             throw new IllegalArgumentException("缺少 " + key);
         }
