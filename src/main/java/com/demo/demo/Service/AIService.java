@@ -50,6 +50,7 @@ public class AIService {
     private final WebSearchTool webSearchTool;
     private final EmailTool emailTool;
     private final VectorMemoryStore vectorMemoryStore;
+    private final PeriodicReplyService periodicReplyService;
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
 
@@ -61,7 +62,8 @@ public class AIService {
                      VoiceReplyTool voiceReplyTool,
                      WebSearchTool webSearchTool,
                      EmailTool emailTool,
-                     VectorMemoryStore vectorMemoryStore) {
+                     VectorMemoryStore vectorMemoryStore,
+                     PeriodicReplyService periodicReplyService) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
@@ -71,6 +73,7 @@ public class AIService {
         this.webSearchTool=webSearchTool;
         this.emailTool = emailTool;
         this.vectorMemoryStore = vectorMemoryStore;
+        this.periodicReplyService = periodicReplyService;
     }
 
     @PostConstruct
@@ -120,6 +123,11 @@ public class AIService {
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool,
+                        voiceReplyTool, webSearchTool, emailTool, periodicReplyService))
+                .hooks(trimHook, new MemoryAgentHook(
+                        vectorMemoryStore, periodicReplyService))
+                .interceptors(new MemoryContextInterceptor())
                 .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool))
                 .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore),new UpdateStateHook(),summarizationHook)
                 .interceptors(new MemoryContextInterceptor(),new UserStateInterceptor(), TodoListInterceptor.builder().build())
@@ -130,6 +138,11 @@ public class AIService {
 
     /** 调用 AI 生成回复，失败时返回 null。 */
     public String chat(String userId, String message) {
+        return chat(userId, null, message);
+    }
+
+    /** 调用 AI 生成回复，并把可信的微信发送上下文传给 Agent 工具。 */
+    public String chat(String userId, String contextToken, String message) {
         if (!isConfigured()) {
             log.debug("[AI] API Key 未配置，跳过调用");
             return null;
@@ -140,7 +153,7 @@ public class AIService {
 
         Object lock = userLocks.computeIfAbsent(userId, ignored -> new Object());
         synchronized (lock) {
-            String reply = doChat(userId, message);
+            String reply = doChat(userId, contextToken, message);
             if (reply != null) {
                 vectorMemoryStore.saveAssistantMessage(userId,reply);
             }
@@ -149,7 +162,7 @@ public class AIService {
         }
     }
 
-    private String doChat(String userId, String message) {
+    private String doChat(String userId, String contextToken, String message) {
         log.info("[AI] 收到对话请求 userId={} messageLength={}",
                 maskUserId(userId), message == null ? 0 : message.length());
 
@@ -157,11 +170,14 @@ public class AIService {
         String enhancedSystem = contextManager.buildEnhancedSystemMessage(userId, systemPrompt);
 
         try {
-            RunnableConfig runnableConfig = RunnableConfig.builder()
+            var configBuilder = RunnableConfig.builder()
                     .threadId(userId)
                     .addMetadata("user_id", userId)
-                    .addMetadata("system_prompt", enhancedSystem)
-                    .build();
+                    .addMetadata("system_prompt", enhancedSystem);
+            if (contextToken != null && !contextToken.isBlank()) {
+                configBuilder.addMetadata("context_token", contextToken);
+            }
+            RunnableConfig runnableConfig = configBuilder.build();
             AssistantMessage response = agent.call(message, runnableConfig);
             String reply = response.getText();
             if (reply == null || reply.isBlank()) {

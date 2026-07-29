@@ -48,6 +48,9 @@ ai:
   # 对话记忆
   memory:
     file: ${AI_MEMORY_FILE:./data/conversation-memory.json}
+  # 周期回复任务
+  periodic-reply:
+    file: ${PERIODIC_REPLY_FILE:./data/periodic-replies.json}
   # 系统提示词
   system-prompt:  你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
     
