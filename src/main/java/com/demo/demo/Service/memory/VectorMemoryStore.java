@@ -47,6 +47,31 @@ public class VectorMemoryStore {
         }
     }
 
+    /** 保存一条用户消息（独立存储，不依赖 AI 回复） */
+    public void saveUserMessage(String userId, String userMessage) {
+        try {
+            float[] userVec = embed(userMessage);
+            int r = saveOne(userId, "user", userMessage, userVec);
+            pruneUser(userId);
+            log.info("[VectorMemory] 保存用户消息 userId={} msgLen={} insertRows={} totalRows={}",
+                    mask(userId), userMessage.length(), r, countByUser(userId));
+        } catch (Exception e) {
+            log.error("[VectorMemory] 保存用户消息失败 userId={}: {}", mask(userId), e.getMessage(), e);
+        }
+    }
+
+    /** 保存一条 AI 回复（独立存储） */
+    public void saveAssistantMessage(String userId, String assistantMessage) {
+        try {
+            float[] aiVec = embed(assistantMessage);
+            int r = saveOne(userId, "assistant", assistantMessage, aiVec);
+            pruneUser(userId);
+            log.info("[VectorMemory] 保存AI回复 userId={} msgLen={} insertRows={} totalRows={}",
+                    mask(userId), assistantMessage.length(), r, countByUser(userId));
+        } catch (Exception e) {
+            log.error("[VectorMemory] 保存AI回复失败 userId={}: {}", mask(userId), e.getMessage(), e);
+        }
+    }
     /** 检索与当前消息最相关的历史记忆 */
     public List<String> retrieveRelevant(String userId, String currentMessage) {
         //将当条信息向量化

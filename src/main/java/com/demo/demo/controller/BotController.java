@@ -52,6 +52,9 @@ public class BotController {
     @Resource
     private ContextManager contextManager;
 
+    @Resource
+    private PeriodicReplyService periodicReplyService;
+
     // ==================== 初始化：设置自动回复 ====================
 
     @PostConstruct
@@ -81,7 +84,7 @@ public class BotController {
             //}
 
             // -- 普通对话（ReactAgent 内置工具调用） --
-            String aiReply = aiService.chat(fromUser, text);
+            String aiReply = aiService.chat(fromUser, contextToken, text);
             if (aiReply == null || aiReply.isBlank()) {
                 return "AI回复为空，请稍后再试";
             }
@@ -118,7 +121,7 @@ public class BotController {
         if (aiService.isConfigured()){
             String prompt = "用户发了一张图片，图片内容是：「" + description + "」\n"
                     + "请根据图片内容用中文简短回复用户。如果用户之前问了关于图片的问题，请一并回答。";
-            String aiReply = aiService.chat(fromUser,prompt);
+            String aiReply = aiService.chat(fromUser, contextToken, prompt);
             if (aiReply!=null && !aiReply.isBlank()){
                 byte[] newImage = imageGenerationTool.takeLastImage();
                 if (newImage !=null){
@@ -136,6 +139,13 @@ public class BotController {
     });
 
         multiBotManager.setSharedVoiceHandler(voiceMessageHandler);
+        periodicReplyService.configure(
+                () -> multiBotManager.getDefaultBot().isLoggedIn(),
+                task -> aiService.chat(
+                        task.userId(), task.contextToken(), task.content()),
+                (userId, contextToken, content) ->
+                        multiBotManager.getDefaultBot()
+                                .sendReply(userId, contextToken, content));
         log.info("[BotController] 多Bot自动回复处理器初始化完成");
 }
 

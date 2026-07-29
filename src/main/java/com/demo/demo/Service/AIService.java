@@ -8,11 +8,11 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.AgentCommand;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
+import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
+import com.alibaba.cloud.ai.graph.agent.interceptor.todolist.TodoListInterceptor;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.demo.demo.Service.context.ContextManager;
-import com.demo.demo.Service.memory.MemoryAgentHook;
-import com.demo.demo.Service.memory.MemoryContextInterceptor;
-import com.demo.demo.Service.memory.VectorMemoryStore;
+import com.demo.demo.Service.memory.*;
 import com.demo.demo.Service.tool.*;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +51,7 @@ public class AIService {
     private final EmailTool emailTool;
     private final ScheduledTaskTool scheduledTaskTool;
     private final VectorMemoryStore vectorMemoryStore;
+    private final PeriodicReplyService periodicReplyService;
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
 
@@ -64,6 +65,8 @@ public class AIService {
                      EmailTool emailTool,
                      ScheduledTaskTool scheduledTaskTool,
                      VectorMemoryStore vectorMemoryStore) {
+                     VectorMemoryStore vectorMemoryStore,
+                     PeriodicReplyService periodicReplyService) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
@@ -74,6 +77,7 @@ public class AIService {
         this.emailTool = emailTool;
         this.scheduledTaskTool = scheduledTaskTool;
         this.vectorMemoryStore = vectorMemoryStore;
+        this.periodicReplyService = periodicReplyService;
     }
 
     @PostConstruct
@@ -92,6 +96,12 @@ public class AIService {
                         .build())
                 .build();
 
+        // 创建消息压缩 Hook
+        SummarizationHook summarizationHook = SummarizationHook.builder()
+                .model(chatModel)
+                .maxTokensBeforeSummary(4000)
+                .messagesToKeep(20)
+                .build();
         MessagesModelHook trimHook = new MessagesModelHook() {
             @Override
             public String getName() {
@@ -103,6 +113,7 @@ public class AIService {
                 int maxMessages = 20;
                 if (messages.size() > maxMessages) {
                     List<Message> trimmed = new ArrayList<>();
+                    // 加一个周期记忆
                     trimmed.addAll(messages.subList(0, 2));
                     trimmed.addAll(messages.subList(messages.size() - (maxMessages - 2), messages.size()));
                     return new AgentCommand(trimmed, UpdatePolicy.REPLACE);
@@ -118,7 +129,14 @@ public class AIService {
                 .saver(memorySaver)
                 .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool,scheduledTaskTool))
                 .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore))
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool,
+                        voiceReplyTool, webSearchTool, emailTool, periodicReplyService))
+                .hooks(trimHook, new MemoryAgentHook(
+                        vectorMemoryStore, periodicReplyService))
                 .interceptors(new MemoryContextInterceptor())
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool))
+                .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore),new UpdateStateHook(),summarizationHook)
+                .interceptors(new MemoryContextInterceptor(),new UserStateInterceptor(), TodoListInterceptor.builder().build())
                 .build();
     }
 
@@ -126,23 +144,31 @@ public class AIService {
 
     /** 调用 AI 生成回复，失败时返回 null。 */
     public String chat(String userId, String message) {
+        return chat(userId, null, message);
+    }
+
+    /** 调用 AI 生成回复，并把可信的微信发送上下文传给 Agent 工具。 */
+    public String chat(String userId, String contextToken, String message) {
         if (!isConfigured()) {
             log.debug("[AI] API Key 未配置，跳过调用");
             return null;
         }
+        if(!message.isBlank()){
+            vectorMemoryStore.saveUserMessage(userId,message);
+        }
 
         Object lock = userLocks.computeIfAbsent(userId, ignored -> new Object());
         synchronized (lock) {
-            String reply = doChat(userId, message);
+            String reply = doChat(userId, contextToken, message);
             if (reply != null) {
-                vectorMemoryStore.saveTurn(userId, message, reply);
+                vectorMemoryStore.saveAssistantMessage(userId,reply);
             }
             return reply;
 
         }
     }
 
-    private String doChat(String userId, String message) {
+    private String doChat(String userId, String contextToken, String message) {
         log.info("[AI] 收到对话请求 userId={} messageLength={}",
                 maskUserId(userId), message == null ? 0 : message.length());
 
@@ -150,11 +176,14 @@ public class AIService {
         String enhancedSystem = contextManager.buildEnhancedSystemMessage(userId, systemPrompt);
 
         try {
-            RunnableConfig runnableConfig = RunnableConfig.builder()
+            var configBuilder = RunnableConfig.builder()
                     .threadId(userId)
                     .addMetadata("user_id", userId)
-                    .addMetadata("system_prompt", enhancedSystem)
-                    .build();
+                    .addMetadata("system_prompt", enhancedSystem);
+            if (contextToken != null && !contextToken.isBlank()) {
+                configBuilder.addMetadata("context_token", contextToken);
+            }
+            RunnableConfig runnableConfig = configBuilder.build();
             AssistantMessage response = agent.call(message, runnableConfig);
             String reply = response.getText();
             if (reply == null || reply.isBlank()) {
