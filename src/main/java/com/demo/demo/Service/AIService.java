@@ -64,7 +64,6 @@ public class AIService {
                      WebSearchTool webSearchTool,
                      EmailTool emailTool,
                      ScheduledTaskTool scheduledTaskTool,
-                     VectorMemoryStore vectorMemoryStore) {
                      VectorMemoryStore vectorMemoryStore,
                      PeriodicReplyService periodicReplyService) {
         this.memorySaver = new MemorySaver();
@@ -127,16 +126,15 @@ public class AIService {
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
-                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool,scheduledTaskTool))
-                .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore))
                 .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool,
-                        voiceReplyTool, webSearchTool, emailTool, periodicReplyService))
-                .hooks(trimHook, new MemoryAgentHook(
-                        vectorMemoryStore, periodicReplyService))
-                .interceptors(new MemoryContextInterceptor())
-                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool))
-                .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore),new UpdateStateHook(),summarizationHook)
-                .interceptors(new MemoryContextInterceptor(),new UserStateInterceptor(), TodoListInterceptor.builder().build())
+                        voiceReplyTool, webSearchTool, emailTool, scheduledTaskTool, periodicReplyService))
+                .hooks(trimHook,
+                        new MemoryAgentHook(vectorMemoryStore, periodicReplyService),
+                        new UpdateStateHook(),
+                        summarizationHook)
+                .interceptors(new MemoryContextInterceptor(),
+                        new UserStateInterceptor(),
+                        TodoListInterceptor.builder().build())
                 .build();
     }
 
