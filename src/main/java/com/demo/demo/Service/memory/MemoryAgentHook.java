@@ -112,9 +112,9 @@ public class MemoryAgentHook extends AgentHook {
         List<Message> messages = (List<Message>) messagesOpt.get();
 
         return messages.stream()
-                .filter(msg -> msg instanceof UserMessage)
-                .map(msg -> ((UserMessage) msg).getText())
-                .reduce((first, second) -> second)
+                .filter(msg -> msg instanceof UserMessage)//获取用户的信息
+                .map(msg -> ((UserMessage) msg).getText())//获取用户信息中的文本
+                .reduce((first, second) -> second)//保留最后一条信息
                 .orElse("");
     }
 
