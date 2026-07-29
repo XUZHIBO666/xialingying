@@ -8,11 +8,11 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.AgentCommand;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
+import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
+import com.alibaba.cloud.ai.graph.agent.interceptor.todolist.TodoListInterceptor;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.demo.demo.Service.context.ContextManager;
-import com.demo.demo.Service.memory.MemoryAgentHook;
-import com.demo.demo.Service.memory.MemoryContextInterceptor;
-import com.demo.demo.Service.memory.VectorMemoryStore;
+import com.demo.demo.Service.memory.*;
 import com.demo.demo.Service.tool.*;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -89,6 +89,12 @@ public class AIService {
                         .build())
                 .build();
 
+        // 创建消息压缩 Hook
+        SummarizationHook summarizationHook = SummarizationHook.builder()
+                .model(chatModel)
+                .maxTokensBeforeSummary(4000)
+                .messagesToKeep(20)
+                .build();
         MessagesModelHook trimHook = new MessagesModelHook() {
             @Override
             public String getName() {
@@ -100,6 +106,7 @@ public class AIService {
                 int maxMessages = 20;
                 if (messages.size() > maxMessages) {
                     List<Message> trimmed = new ArrayList<>();
+                    // 加一个周期记忆
                     trimmed.addAll(messages.subList(0, 2));
                     trimmed.addAll(messages.subList(messages.size() - (maxMessages - 2), messages.size()));
                     return new AgentCommand(trimmed, UpdatePolicy.REPLACE);
@@ -114,8 +121,8 @@ public class AIService {
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
                 .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool))
-                .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore))
-                .interceptors(new MemoryContextInterceptor())
+                .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore),new UpdateStateHook(),summarizationHook)
+                .interceptors(new MemoryContextInterceptor(),new UserStateInterceptor(), TodoListInterceptor.builder().build())
                 .build();
     }
 
@@ -127,12 +134,15 @@ public class AIService {
             log.debug("[AI] API Key 未配置，跳过调用");
             return null;
         }
+        if(!message.isBlank()){
+            vectorMemoryStore.saveUserMessage(userId,message);
+        }
 
         Object lock = userLocks.computeIfAbsent(userId, ignored -> new Object());
         synchronized (lock) {
             String reply = doChat(userId, message);
             if (reply != null) {
-                vectorMemoryStore.saveTurn(userId, message, reply);
+                vectorMemoryStore.saveAssistantMessage(userId,reply);
             }
             return reply;
 
