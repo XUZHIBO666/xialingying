@@ -5,13 +5,11 @@ import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.tool.ImageGenerationTool;
 import com.demo.demo.Service.tool.VoiceReplyTool;
 import com.demo.demo.Service.voice.VoiceMessageHandler;
-
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
-
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -61,6 +59,7 @@ public class BotController {
 
     @PostConstruct
     public void initAutoReply() {
+
         log.info("[BotController] 初始化多Bot自动回复处理器...");
 
         multiBotManager.setSharedAutoReply((fromUser, contextToken, text) -> {
@@ -282,15 +281,22 @@ public class BotController {
         }
         return bot;
     }
-
     private static String maskToken(String token) {
-        if (token == null || token.isBlank()) return "null";
-        if (token.length() <= 8) return "***";
+        if (token == null || token.isBlank()) {
+            return "null";
+        }
+        if (token.length() <= 8) {
+            return "***";
+        }
         return token.substring(0, 4) + "..." + token.substring(token.length() - 4);
     }
 
     private static String maskUserId(String userId) {
-        if (userId == null || userId.length() < 9) return "***";
+        // 统一增加空白判断，避免空串报错
+        if (userId == null || userId.isBlank() || userId.length() < 9) {
+            return "***";
+        }
         return userId.substring(0, 4) + "..." + userId.substring(userId.length() - 4);
     }
+
 }

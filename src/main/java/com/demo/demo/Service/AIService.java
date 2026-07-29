@@ -49,6 +49,7 @@ public class AIService {
     private final VoiceReplyTool voiceReplyTool;
     private final WebSearchTool webSearchTool;
     private final EmailTool emailTool;
+    private final ScheduledTaskTool scheduledTaskTool;
     private final VectorMemoryStore vectorMemoryStore;
     private final PeriodicReplyService periodicReplyService;
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
@@ -62,6 +63,8 @@ public class AIService {
                      VoiceReplyTool voiceReplyTool,
                      WebSearchTool webSearchTool,
                      EmailTool emailTool,
+                     ScheduledTaskTool scheduledTaskTool,
+                     VectorMemoryStore vectorMemoryStore) {
                      VectorMemoryStore vectorMemoryStore,
                      PeriodicReplyService periodicReplyService) {
         this.memorySaver = new MemorySaver();
@@ -72,6 +75,7 @@ public class AIService {
         this.voiceReplyTool=voiceReplyTool;
         this.webSearchTool=webSearchTool;
         this.emailTool = emailTool;
+        this.scheduledTaskTool = scheduledTaskTool;
         this.vectorMemoryStore = vectorMemoryStore;
         this.periodicReplyService = periodicReplyService;
     }
@@ -123,6 +127,8 @@ public class AIService {
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
+                .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool, voiceReplyTool,webSearchTool,emailTool,scheduledTaskTool))
+                .hooks(trimHook, new MemoryAgentHook(vectorMemoryStore))
                 .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool,
                         voiceReplyTool, webSearchTool, emailTool, periodicReplyService))
                 .hooks(trimHook, new MemoryAgentHook(
