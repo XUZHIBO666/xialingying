@@ -53,6 +53,7 @@ public class ScheduledTaskService {
             return t;
         });
         loadFromDisk();
+        cleanupFinishedTasks();
         tasks.values().stream()
                 .filter(ScheduledTask::isPending)
                 .filter(t -> !t.isPastDue())
@@ -62,7 +63,7 @@ public class ScheduledTaskService {
 
     @PreDestroy
     public void shutdown() {
-        futures.values().forEach(f -> f.cancel(false));
+        futures.values().forEach(f -> f.cancel(false));//关闭前取消所有未执行的调度任务。cancel(false) 表示不中断正在执行的任务。
         if (scheduler != null) {
             scheduler.shutdown();
             try {
@@ -73,23 +74,23 @@ public class ScheduledTaskService {
                 scheduler.shutdownNow();
                 Thread.currentThread().interrupt();
             }
-        }
+        }//两阶段关闭模式:先 shutdown()（等任务跑完）→ 超时后 shutdownNow()（强制中断）。
         log.info("[定时任务] 调度器已关闭");
     }
 
     // ==================== 公开方法 ====================
 
     public String scheduleTask(String userId, String contextToken, String action, LocalDateTime executeAt) {
-        String id = "task-" + UUID.randomUUID().toString().substring(0, 8);
+        String id = "task-" + UUID.randomUUID().toString().substring(0, 8);//生成短ID
         ScheduledTask task = new ScheduledTask(id, userId, contextToken, action,
-                executeAt.toString());
-        tasks.put(id, task);
-        latestContextTokens.put(userId, contextToken);
-        scheduleInternal(task);
-        persistToDisk();
+                executeAt.toString());//创建任务对象
+        tasks.put(id, task);//存入Map
+        latestContextTokens.put(userId, contextToken);//记录该用户最新的contextToken
+        scheduleInternal(task);//注册到调度器
+        persistToDisk();//持久化
         log.info("[定时任务] 已创建 id={} userId={} executeAt={} action={}",
                 id, maskUserId(userId), executeAt, truncate(action, 50));
-        return id;
+        return id;//返回ID给用户
     }
 
     public boolean cancelTask(String taskId) {
@@ -113,27 +114,27 @@ public class ScheduledTaskService {
                 .filter(ScheduledTask::isPending)
                 .sorted(Comparator.comparing(ScheduledTask::getExecuteAt))
                 .toList();
-    }
+    }//返回所有活跃任务按时间排序
 
     public void updateContextToken(String userId, String contextToken) {
         if (userId != null && contextToken != null) {
             latestContextTokens.put(userId, contextToken);
         }
-    }
+    }//更新用户的contextToken
 
     // ==================== 内部调度 ====================
 
     private void scheduleInternal(ScheduledTask task) {
-        LocalDateTime executeAt = LocalDateTime.parse(task.getExecuteAt());
-        long delayMs = ChronoUnit.MILLIS.between(LocalDateTime.now(), executeAt);
+        LocalDateTime executeAt = LocalDateTime.parse(task.getExecuteAt());//从对象中解析执行时间
+        long delayMs = ChronoUnit.MILLIS.between(LocalDateTime.now(), executeAt);//计算当前时间与执行时间毫秒差
         if (delayMs <= 0) {
             log.warn("[定时任务] 任务已过期，跳过 id={} executeAt={}", task.getId(), executeAt);
             task.setStatus("expired");
             return;
-        }
+        }//如果延迟小于0，说明任务已过期直接返回
         ScheduledFuture<?> future = scheduler.schedule(
-                () -> executeTask(task.getId()), delayMs, TimeUnit.MILLISECONDS);
-        futures.put(task.getId(), future);
+                () -> executeTask(task.getId()), delayMs, TimeUnit.MILLISECONDS);//在delayMs毫秒后执行executeTask
+        futures.put(task.getId(), future);//保存Future引用,用于后续可能取消的操作
         log.info("[定时任务] 已注册到调度器 id={} delayMs={}", task.getId(), delayMs);
     }
 
@@ -163,6 +164,7 @@ public class ScheduledTaskService {
             log.error("[定时任务] 执行失败 id={}: {}", taskId, e.getMessage(), e);
             task.setStatus("failed");
         }
+        cleanupFinishedTasks();
         persistToDisk();
     }
 
@@ -170,20 +172,20 @@ public class ScheduledTaskService {
 
     private void persistToDisk() {
         try {
-            List<ScheduledTask> taskList = new ArrayList<>(tasks.values());
-            String json = GSON.toJson(taskList);
+            List<ScheduledTask> taskList = new ArrayList<>(tasks.values());//173行，快照
+            String json = GSON.toJson(taskList);//174行，序列化
             Path path = Path.of(filePath);
             if (path.getParent() != null) {
-                Files.createDirectories(path.getParent());
+                Files.createDirectories(path.getParent());//确保目录存在
             }
             Path temp = Files.createTempFile(
-                    path.getParent(), path.getFileName().toString(), ".tmp");
+                    path.getParent(), path.getFileName().toString(), ".tmp");//临时创建文件
             try {
-                Files.writeString(temp, json, StandardCharsets.UTF_8);
+                Files.writeString(temp, json, StandardCharsets.UTF_8);       // 写入临时文件
                 Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING,
-                        StandardCopyOption.ATOMIC_MOVE);
+                        StandardCopyOption.ATOMIC_MOVE);                         // 原子替换目标文件
             } finally {
-                Files.deleteIfExists(temp);
+                Files.deleteIfExists(temp);                                  // 清理临时文件
             }
         } catch (Exception e) {
             log.error("[定时任务] 持久化失败: {}", e.getMessage());
@@ -192,19 +194,21 @@ public class ScheduledTaskService {
 
     private void loadFromDisk() {
         Path path = Path.of(filePath);
-        if (!Files.isRegularFile(path)) {
-            return;
+        if (!Files.isRegularFile(path)) {    // 第 195 行
+            return;                           // 文件不存在 → 首次启动，直接返回
         }
         try {
             String json = Files.readString(path);
             if (json.isBlank()) {
-                return;
+                return;                           // 空文件 → 跳过
             }
+            // 第 203–204 行
             List<ScheduledTask> loaded = GSON.fromJson(json,
                     new TypeToken<List<ScheduledTask>>() {}.getType());
+            // 第 205–210 行
             if (loaded != null) {
                 for (ScheduledTask t : loaded) {
-                    if (t.getId() != null) {
+                    if (t.getId() != null) {          // 防御性检查：跳过无效数据
                         tasks.put(t.getId(), t);
                     }
                 }
@@ -226,5 +230,15 @@ public class ScheduledTaskService {
             return "";
         }
         return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
+    }//截断长字符串，日志中避免输出过长内容
+    private void cleanupFinishedTasks() {
+        int before = tasks.size();
+        tasks.entrySet().removeIf(entry -> !entry.getValue().isPending());
+        int removed = before - tasks.size();
+        if (removed > 0) {
+            log.info("[定时任务] 已清理 {} 个终态任务，剩余 {} 个", removed, tasks.size());
+        }
     }
+
+
 }

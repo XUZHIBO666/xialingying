@@ -1,7 +1,13 @@
 package com.demo.demo.Service.schedule;
 
-import java.time.LocalDateTime;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 
+import java.time.LocalDateTime;
+@Slf4j
+@Getter
+@Setter
 public class ScheduledTask {
 
     private String id;
@@ -37,19 +43,5 @@ public class ScheduledTask {
         }
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
-    public String getUserId() { return userId; }
-    public void setUserId(String userId) { this.userId = userId; }
-    public String getContextToken() { return contextToken; }
-    public void setContextToken(String contextToken) { this.contextToken = contextToken; }
-    public String getAction() { return action; }
-    public void setAction(String action) { this.action = action; }
-    public String getExecuteAt() { return executeAt; }
-    public void setExecuteAt(String executeAt) { this.executeAt = executeAt; }
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
-    public long getCreatedAt() { return createdAt; }
-    public void setCreatedAt(long createdAt) { this.createdAt = createdAt; }
 
 }
