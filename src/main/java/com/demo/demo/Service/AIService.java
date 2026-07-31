@@ -8,6 +8,7 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.AgentCommand;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.MessagesModelHook;
 import com.alibaba.cloud.ai.graph.agent.hook.messages.UpdatePolicy;
+import com.alibaba.cloud.ai.graph.agent.hook.skills.SkillsAgentHook;
 import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
 import com.alibaba.cloud.ai.graph.agent.interceptor.todolist.TodoListInterceptor;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
@@ -36,6 +37,7 @@ import java.util.concurrent.ConcurrentMap;
 @Slf4j
 @Service
 public class AIService {
+    private final SkillsAgentHook skillsAgentHook;
     @Value("${spring.ai.dashscope.api-key:}")
     private String apiKey;
     @Value("${ai.system-prompt}")
@@ -56,16 +58,16 @@ public class AIService {
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
 
     public AIService(
-                     ContextManager contextManager,
-                     WeatherTool weatherTool,
-                     TimeTool timeTool,
-                     ImageGenerationTool imageGenerationTool,
-                     VoiceReplyTool voiceReplyTool,
-                     WebSearchTool webSearchTool,
-                     EmailTool emailTool,
-                     ScheduledTaskTool scheduledTaskTool,
-                     VectorMemoryStore vectorMemoryStore,
-                     PeriodicReplyService periodicReplyService) {
+            ContextManager contextManager,
+            WeatherTool weatherTool,
+            TimeTool timeTool,
+            ImageGenerationTool imageGenerationTool,
+            VoiceReplyTool voiceReplyTool,
+            WebSearchTool webSearchTool,
+            EmailTool emailTool,
+            ScheduledTaskTool scheduledTaskTool,
+            VectorMemoryStore vectorMemoryStore,
+            PeriodicReplyService periodicReplyService, SkillsAgentHook skillsAgentHook) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
@@ -77,6 +79,7 @@ public class AIService {
         this.scheduledTaskTool = scheduledTaskTool;
         this.vectorMemoryStore = vectorMemoryStore;
         this.periodicReplyService = periodicReplyService;
+        this.skillsAgentHook = skillsAgentHook;
     }
 
     @PostConstruct
@@ -131,7 +134,7 @@ public class AIService {
                 .hooks(trimHook,
                         new MemoryAgentHook(vectorMemoryStore, periodicReplyService),
                         new UpdateStateHook(),
-                        summarizationHook)
+                        summarizationHook,skillsAgentHook)
                 .interceptors(new MemoryContextInterceptor(),
                         new UserStateInterceptor(),
                         TodoListInterceptor.builder().build())
