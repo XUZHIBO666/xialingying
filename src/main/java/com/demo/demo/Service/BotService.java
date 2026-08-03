@@ -5,6 +5,7 @@ import com.demo.demo.Service.voice.VoiceMessageHandler;
 import com.demo.demo.Service.voice.VoiceMessageService;
 import com.lth.wechat.ilink.ILinkClient;
 import com.lth.wechat.ilink.LoginCredentials;
+import com.lth.wechat.ilink.dto.message.FileContent;
 import com.lth.wechat.ilink.dto.message.ImageContent;
 import com.lth.wechat.ilink.dto.message.MessageItemDto;
 import com.lth.wechat.ilink.dto.message.ReceiveMessagesResult;
@@ -98,6 +99,7 @@ public class BotService {
     // 自动回复处理器
     private volatile ReplyHandler autoReplyHandler;
     private volatile ImageReplyHandler imageReplyHandler;
+    private volatile FileReplyHandler fileReplyHandler;
     private volatile VoiceMessageHandler voiceMessageHandler;
 
     public BotService() {
@@ -339,6 +341,13 @@ public class BotService {
                             if (item.isVoice()) {
                                 log.info("[iLink] 收到语音消息 from={}", maskUserId(fromUser));
                                 processVoiceMessage(fromUser, contextToken, item.getVoice());
+                                continue;
+                            }
+
+                            // ★ 文件消息（简历 PDF/Word）
+                            if (item.isFile()) {
+                                log.info("[iLink] 收到文件消息 from={}", maskUserId(fromUser));
+                                processFileMessage(fromUser, contextToken, item);
                             }
                         }
                     }
@@ -855,6 +864,71 @@ public class BotService {
     public void setVoiceMessageHandler(VoiceMessageHandler handler) {
         this.voiceMessageHandler = handler;
         log.info("[iLink] 语音处理器已设置");
+    }
+
+    // ==================== 文件消息处理 ====================
+
+    public void setFileReply(FileReplyHandler handler) {
+        this.fileReplyHandler = handler;
+        log.info("[iLink] 文件消息处理器已设置");
+    }
+
+    private void processFileMessage(String fromUser, String contextToken, MessageItemDto item) {
+        FileContent file = item.getFile();
+        if (file == null) {
+            sendReply(fromUser, contextToken, "文件消息解析失败");
+            return;
+        }
+
+        String fileName = file.getFileName();
+        String downloadParam = file.getEncryptQueryParam();
+        String aesKey = file.getAesKey();
+        final long fileSize = parseFileLen(file.getLen());
+
+        if (downloadParam == null || downloadParam.isBlank()) {
+            sendReply(fromUser, contextToken, "文件消息格式不支持，请重新发送。");
+            return;
+        }
+
+        messages.add(new Msg(fromUser, rememberReplyTarget(fromUser, contextToken),
+                "[文件] " + (fileName != null ? fileName : "未知文件")));
+        displayLog(fromUser + ": [文件] " + fileName);
+
+        submitReplyTask(fromUser, contextToken, () -> {
+            try {
+                byte[] fileBytes = client.downloadMedia(downloadParam, aesKey);
+                FileReplyHandler handler = fileReplyHandler;
+                if (handler != null) {
+                    String reply = handler.onFile(fromUser, contextToken,
+                            fileName, fileBytes, fileSize);
+                    if (reply != null && !reply.isEmpty()) {
+                        sendReply(fromUser, contextToken, reply);
+                    }
+                } else {
+                    sendReply(fromUser, contextToken,
+                            "收到文件「%s」，但简历处理服务未配置。".formatted(fileName));
+                }
+            } catch (Exception e) {
+                log.error("[iLink] 文件处理异常 from={}: {}",
+                        maskUserId(fromUser), e.getMessage(), e);
+                sendReply(fromUser, contextToken, "文件处理失败: " + e.getMessage());
+            }
+        });
+    }
+
+    private static long parseFileLen(String len) {
+        if (len == null) return 0;
+        try {
+            return Long.parseLong(len);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    @FunctionalInterface
+    public interface FileReplyHandler {
+        String onFile(String fromUserId, String contextToken,
+                      String fileName, byte[] fileBytes, long fileSize);
     }
 
     @FunctionalInterface

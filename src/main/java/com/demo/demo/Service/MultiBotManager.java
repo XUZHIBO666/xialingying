@@ -37,6 +37,9 @@ public class MultiBotManager {
     @Getter
     private volatile VoiceMessageHandler sharedVoiceHandler;
 
+    @Getter
+    private volatile BotService.FileReplyHandler sharedFileReplyHandler;
+
     /**
      * 创建新的Bot实例
      * @param displayName 显示名称（可选）
@@ -119,6 +122,15 @@ public class MultiBotManager {
     }
 
     /**
+     * 设置共享的文件消息处理器（简历文件等）
+     */
+    public void setSharedFileReply(BotService.FileReplyHandler handler) {
+        this.sharedFileReplyHandler = handler;
+        botInstances.values().forEach(bot -> bot.setFileReply(handler));
+        log.info("[MultiBot] 设置共享文件处理器 (Bot数量: {})", botInstances.size());
+    }
+
+    /**
      * 为指定Bot设置独立的处理器（覆盖共享配置）
      */
     public void setBotSpecificAutoReply(String instanceId, BotService.ReplyHandler handler) {
@@ -182,6 +194,9 @@ public class MultiBotManager {
         }
         if (sharedVoiceHandler != null) {
             bot.setVoiceMessageHandler(sharedVoiceHandler);
+        }
+        if (sharedFileReplyHandler != null) {
+            bot.setFileReply(sharedFileReplyHandler);
         }
     }
 }

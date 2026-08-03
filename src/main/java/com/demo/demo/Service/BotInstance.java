@@ -5,6 +5,7 @@ import com.demo.demo.Service.voice.VoiceMessageHandler;
 import com.demo.demo.Service.voice.VoiceMessageService;
 import com.lth.wechat.ilink.ILinkClient;
 import com.lth.wechat.ilink.LoginCredentials;
+import com.lth.wechat.ilink.dto.message.FileContent;
 import com.lth.wechat.ilink.dto.message.ImageContent;
 import com.lth.wechat.ilink.dto.message.MessageItemDto;
 import com.lth.wechat.ilink.dto.message.ReceiveMessagesResult;
@@ -83,6 +84,7 @@ public class BotInstance {
     private volatile BotService.ReplyHandler autoReplyHandler;
     private volatile BotService.ImageReplyHandler imageReplyHandler;
     private volatile VoiceMessageHandler voiceMessageHandler;
+    private volatile BotService.FileReplyHandler fileReplyHandler;
 
     // ==================== 速率限制 ====================
 
@@ -258,6 +260,8 @@ public class BotInstance {
                                 processImageItem(fromUser, contextToken, item.getImage());
                             } else if (item.isVoice()) {
                                 processVoiceMessage(fromUser, contextToken, item.getVoice());
+                            } else if (item.isFile()) {
+                                processFileMessage(fromUser, contextToken, item);
                             }
                         }
                     }
@@ -413,6 +417,57 @@ public class BotInstance {
         }
     }
 
+    private void processFileMessage(String fromUser, String contextToken, MessageItemDto item) {
+        FileContent file = item.getFile();
+        if (file == null) {
+            sendReply(fromUser, contextToken, "文件消息解析失败");
+            return;
+        }
+        String fileName = file.getFileName();
+        String downloadParam = file.getEncryptQueryParam();
+        String aesKey = file.getAesKey();
+        final long fileSize = parseFileSize(file.getLen());
+
+        if (downloadParam == null || downloadParam.isBlank()) {
+            sendReply(fromUser, contextToken, "文件消息格式不支持");
+            return;
+        }
+
+        messages.add(new Msg(fromUser, rememberReplyTarget(fromUser, contextToken),
+                "[文件] " + (fileName != null ? fileName : "未知文件")));
+        displayLog(fromUser + ": [文件] " + fileName);
+
+        submitReplyTask(fromUser, contextToken, () -> {
+            try {
+                byte[] fileBytes = client.downloadMedia(downloadParam, aesKey);
+                BotService.FileReplyHandler handler = fileReplyHandler;
+                if (handler != null) {
+                    String reply = handler.onFile(fromUser, contextToken,
+                            fileName, fileBytes, fileSize);
+                    if (reply != null && !reply.isEmpty()) {
+                        sendReply(fromUser, contextToken, reply);
+                    }
+                } else {
+                    sendReply(fromUser, contextToken,
+                            "收到文件「%s」，但简历处理服务未配置。".formatted(fileName));
+                }
+            } catch (Exception e) {
+                log.error("[{}] 文件处理异常 from={}: {}",
+                        this.instanceId, maskUserId(fromUser), e.getMessage(), e);
+                sendReply(fromUser, contextToken, "文件处理失败: " + e.getMessage());
+            }
+        });
+    }
+
+    private static long parseFileSize(String len) {
+        if (len == null) return 0;
+        try {
+            return Long.parseLong(len);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
     private void runAutoReply(String fromUser, String contextToken, String text) {
         if (autoReplyHandler == null) return;
 
@@ -515,6 +570,11 @@ public class BotInstance {
         log.info("[{}] 语音处理器已设置", this.instanceId);
     }
 
+    public void setFileReply(BotService.FileReplyHandler handler) {
+        this.fileReplyHandler = handler;
+        log.info("[{}] 文件消息处理器已设置", this.instanceId);
+    }
+
     // ==================== 内部工具方法 ====================
 
     private static ExecutorService createReplyExecutor() {
@@ -530,6 +590,7 @@ public class BotInstance {
     }
 
     private void submitReplyTask(String fromUser, String contextToken, Runnable task) {
+        // 方法:rateLimiter.tryAcquire(fromUser) 用户速率限制默认每秒0.5条，突发两条,超限直接拒绝
         if (!rateLimiter.tryAcquire(fromUser)) {
             totalRateLimitRejected.incrementAndGet();
             sendReply(fromUser, contextToken, "你的消息太快了，请稍后再发。");
@@ -538,7 +599,9 @@ public class BotInstance {
         totalRateLimitAccepted.incrementAndGet();
 
         try {
+            //获取用户级锁
             Object userLock = userReplyLocks.computeIfAbsent(fromUser, ignored -> new Object());
+            //提交到线程池
             replyExecutor.execute(() -> {
                 synchronized (userLock) {
                     task.run();

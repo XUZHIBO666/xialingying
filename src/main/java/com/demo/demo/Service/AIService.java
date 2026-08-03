@@ -54,6 +54,8 @@ public class AIService {
     private final ScheduledTaskTool scheduledTaskTool;
     private final VectorMemoryStore vectorMemoryStore;
     private final PeriodicReplyService periodicReplyService;
+    private final ResumeTool resumeTool;
+    private final LiepinTool liepinTool;
     /** 用户级锁：保证同一用户的对话历史不会被并发修改 */
     private final ConcurrentMap<String, Object> userLocks = new ConcurrentHashMap<>();
 
@@ -67,7 +69,9 @@ public class AIService {
             EmailTool emailTool,
             ScheduledTaskTool scheduledTaskTool,
             VectorMemoryStore vectorMemoryStore,
-            PeriodicReplyService periodicReplyService, SkillsAgentHook skillsAgentHook) {
+            PeriodicReplyService periodicReplyService, SkillsAgentHook skillsAgentHook,
+            ResumeTool resumeTool,
+            LiepinTool liepinTool) {
         this.memorySaver = new MemorySaver();
         this.contextManager = contextManager;
         this.weatherTool = weatherTool;
@@ -80,6 +84,8 @@ public class AIService {
         this.vectorMemoryStore = vectorMemoryStore;
         this.periodicReplyService = periodicReplyService;
         this.skillsAgentHook = skillsAgentHook;
+        this.resumeTool = resumeTool;
+        this.liepinTool = liepinTool;
     }
 
     @PostConstruct
@@ -123,18 +129,18 @@ public class AIService {
                 return null;
             }
         };
-
         this.agent = ReactAgent.builder()
                 .name("wechat_agent")
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
                 .saver(memorySaver)
                 .tools(ToolCallbacks.from(weatherTool, timeTool, imageGenerationTool,
-                        voiceReplyTool, webSearchTool, emailTool, scheduledTaskTool, periodicReplyService))
+                        voiceReplyTool, webSearchTool, emailTool, scheduledTaskTool,
+                        periodicReplyService, resumeTool, liepinTool))
                 .hooks(trimHook,
                         new MemoryAgentHook(vectorMemoryStore, periodicReplyService),
                         new UpdateStateHook(),
-                        summarizationHook,skillsAgentHook)
+                        summarizationHook, skillsAgentHook)
                 .interceptors(new MemoryContextInterceptor(),
                         new UserStateInterceptor(),
                         TodoListInterceptor.builder().build())
