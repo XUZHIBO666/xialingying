@@ -189,6 +189,11 @@ public class ImageGenerationService {
         try {
             // 调用 DashScope 文生图 API
             ImageResponse response = imageModel.call(new ImagePrompt(prompt));
+            // 内容审核拦截或生成失败时 getResult() 返回 null
+            if (response.getResult() == null) {
+                log.warn("[图片生成] 被拒绝（内容审核或生成失败） prompt前30字={}", prompt.substring(0, Math.min(30, prompt.length())));
+                return null;
+            }
             Image image = response.getResult().getOutput();
 
             // 优先取 base64（不需要二次下载，速度更快）

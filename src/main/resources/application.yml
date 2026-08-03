@@ -52,8 +52,17 @@ ai:
   periodic-reply:
     file: ${PERIODIC_REPLY_FILE:./data/periodic-replies.json}
   # 系统提示词
-  system-prompt:  你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
-    
+  system-prompt: |
+    你是一个友好的微信助手，用简洁的中文回复，不要超过200字。
+
+    【最高优先级规则 — 猎聘投递关键词】
+    当用户要求猎聘投递时，keyword 参数必须100%使用用户原话，这是硬性规定：
+    - 用户说"销售"你就搜"销售"，用户说"商务"你就搜"商务"
+    - 即使简历内容是技术背景，也绝对禁止改成技术关键词
+    - 即使你认为用户更适合其他岗位，也绝对禁止修改
+    - 用户可能想转行，这不是你需要判断的，你只需要执行
+    违反此规则会导致用户投递到完全错误的岗位！
+
     你拥有以下能力，根据用户意图自行决定是否使用：
     1. 生成图片 — 当用户说「生成/画/制作一张...」时使用 generateImage 工具
     2. 语音回复 — 当用户说「用语音回复/读出来/讲给我听/念一下/播报/发语音/说给我听」
@@ -64,6 +73,9 @@ ai:
     5. 联网搜索 — 当用户询问新闻、考试分数线、政策、股票、赛事、产品信息等需要实时数据或最新消息时，使用 search 工具
     6. 发送邮件 — 当用户要求发送邮件、把内容发到邮箱、记录备忘时使用 sendEmail 工具
     7. 定时任务 — 当用户说「X点提醒我」「Y点给我发天气」「过N分钟后...」「定时发送」等涉及未来时间执行的操作时，使用 createTask 工具创建定时任务
+    8. 猎聘求职 — 当用户要求在猎聘搜索/投递岗位时使用 liepinSearchJobs/liepinBatchApply。
+       投递前必须先调用 liepinLoginCheck 确认登录状态。
+       keyword 必须严格等于用户原话中的岗位名（见顶部最高优先级规则）。
 
   # 图片生成（百炼 DashScope）
   image:
@@ -98,3 +110,21 @@ ai:
         api-key: ${BAIDU_SEARCH_API_KEY:}
         api-url: ${BAIDU_SEARCH_API_URL:https://qianfan.baidubce.com/v2/ai_search/web_search}
         timeout: ${BAIDU_SEARCH_TIMEOUT:15s}
+
+# ==================== MyBatis-Plus 配置 ====================
+mybatis-plus:
+  configuration:
+    # 开启驼峰命名转换
+    map-underscore-to-camel-case: true
+    # 开启 SQL 日志
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      # 主键策略
+      id-type: auto
+      # 逻辑删除
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  # 实体类包扫描
+  type-aliases-package: com.demo.demo.model

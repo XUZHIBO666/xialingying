@@ -26,6 +26,9 @@ public class ImageGenerationTool {
             @ToolParam(description = "图片的详细描述，中文或英文") String prompt) {
         try {
             byte[] imageBytes = imageGenerationService.generateImage(prompt);
+            if (imageBytes == null) {
+                return "图片生成被拒绝，可能涉及不适当的内容，请修改描述后重试。";
+            }
             lastGeneratedImage.set(imageBytes);
             return "图片已生成，大小 " + (imageBytes.length / 1024) + " KB。请用文字简短告知用户图片已生成。";
         } catch (Exception e) {

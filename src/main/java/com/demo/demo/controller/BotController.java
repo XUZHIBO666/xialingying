@@ -1,6 +1,7 @@
 package com.demo.demo.controller;
 
 import com.demo.demo.Service.*;
+import com.demo.demo.Service.Resume.ResumeFileHandler;
 import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.tool.ImageGenerationTool;
 import com.demo.demo.Service.tool.VoiceReplyTool;
@@ -54,6 +55,10 @@ public class BotController {
 
     @Resource
     private PeriodicReplyService periodicReplyService;
+
+    @Resource
+    private ResumeFileHandler resumeFileHandler;
+
 
     // ==================== 初始化：设置自动回复 ====================
 
@@ -139,6 +144,7 @@ public class BotController {
     });
 
         multiBotManager.setSharedVoiceHandler(voiceMessageHandler);
+        multiBotManager.setSharedFileReply(resumeFileHandler::onFile);
         periodicReplyService.configure(
                 () -> multiBotManager.getDefaultBot().isLoggedIn(),
                 task -> aiService.chat(
