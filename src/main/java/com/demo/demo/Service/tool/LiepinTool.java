@@ -153,7 +153,11 @@ public class LiepinTool {
         synchronized (INIT_LOCK) {
             if (initialized && serverProcess != null && serverProcess.isAlive()) return;
             try {
-                ProcessBuilder pb = new ProcessBuilder("node", "./liepin-mcp-server/index.js");
+                // 用 Node24 启动 MCP Server（本机同时装了 Node16/Node24，PATH 里 Node16 排前会报错：
+                // Playwright 需要 Node20+，且 Node16 不支持 import.meta.dirname）
+                ProcessBuilder pb = new ProcessBuilder(
+                        "E:\\Dev\\Node24\\node.exe",
+                        "E:\\Dev\\Java\\xialingying\\liepin-mcp-server\\index.js");
                 pb.redirectErrorStream(false);
                 serverProcess = pb.start();
                 serverIn = new BufferedWriter(new OutputStreamWriter(serverProcess.getOutputStream(), StandardCharsets.UTF_8));

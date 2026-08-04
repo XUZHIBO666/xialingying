@@ -1,4 +1,4 @@
-package com.demo.demo.Service.Resume;
+package com.demo.demo.Service.resume;
 
 import com.demo.demo.Service.AIService;
 import jakarta.annotation.Resource;
@@ -9,10 +9,10 @@ import org.springframework.stereotype.Service;
 @Service
 public class ResumeFileHandler {
     @Resource
-    private ResumeFileParser resumeFileParser;
+    private com.demo.demo.Service.Resume.ResumeFileParser resumeFileParser;
 
     @Resource
-    private ResumeService resumeService;
+    private com.demo.demo.Service.Resume.ResumeService resumeService;
 
     @Resource
     private AIService aiService;

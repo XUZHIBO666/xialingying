@@ -1,7 +1,7 @@
 package com.demo.demo.controller;
 
 import com.demo.demo.Service.*;
-import com.demo.demo.Service.Resume.ResumeFileHandler;
+import com.demo.demo.Service.resume.ResumeFileHandler;
 import com.demo.demo.Service.context.ContextManager;
 import com.demo.demo.Service.tool.ImageGenerationTool;
 import com.demo.demo.Service.tool.VoiceReplyTool;
