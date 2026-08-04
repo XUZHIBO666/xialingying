@@ -3,9 +3,14 @@
  *
  * 通过 MCP 协议暴露工具给 Spring AI Agent 调用：
  *   - liepin_login_check    : 检查猎聘登录状态
+ *   - liepin_list_accounts  : 列出已配置账号
+ *   - liepin_switch_account : 切换投递账号
  *   - liepin_search_jobs    : 搜索岗位
  *   - liepin_apply_job      : 自动投递单个岗位
  *   - liepin_batch_apply    : 批量投递
+ *
+ * 多账号：每个账号一个独立的登录态目录（liepin-profile/<accountId>/state.json），
+ *         切换账号 = 换一份登录态重建浏览器上下文，账号间 cookie 完全隔离。
  *
  * 使用方式：
  *   1. npm install
@@ -23,11 +28,19 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { chromium } from "playwright";
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 
+// 所有路径基于本文件所在目录（liepin-mcp-server/），不依赖启动时的工作目录。
+// 因为 server 可能被 Java 应用（cwd=项目根）或手动 cd 到别处拉起，相对路径会漂移。
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 // ==================== 配置 ====================
-const USER_DATA_DIR = "./liepin-profile";
-const STORAGE_STATE_FILE = "./liepin-profile/state.json";
+const USER_DATA_DIR = path.join(__dirname, "liepin-profile");
+const STORAGE_STATE_FILE = path.join(__dirname, "liepin-profile", "state.json");
+const ACCOUNTS_FILE = path.join(__dirname, "accounts.json");
+const DEFAULT_ACCOUNT = "default"; // 沿用旧 liepin-profile 登录态
 const BASE_URL = "https://www.liepin.com";
 const DEFAULT_TIMEOUT = 30000;
 
@@ -42,9 +55,43 @@ const SYSTEM_CHROME = (() => {
   return null;
 })();
 
+// ==================== 多账号管理 ====================
+// 当前账号：所有工具操作的登录态都属于该账号
+let currentAccountId = DEFAULT_ACCOUNT;
+let accounts = [];
+
+/** 从 accounts.json 读取账号列表（{ id, name }[]） */
+function loadAccounts() {
+  try {
+    if (fs.existsSync(ACCOUNTS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf-8"));
+      if (data && Array.isArray(data.accounts)) accounts = data.accounts;
+    }
+  } catch (e) {
+    console.error("[账号] 读取 accounts.json 失败:", e.message);
+  }
+}
+
+/** 账号的浏览器数据目录（内置 Chromium 分支用） */
+function accountProfileDir(id) {
+  return id === DEFAULT_ACCOUNT ? USER_DATA_DIR : `${USER_DATA_DIR}/${id}`;
+}
+
+/** 账号的登录态文件（系统 Chrome 分支用） */
+function accountStorageFile(id) {
+  return id === DEFAULT_ACCOUNT ? STORAGE_STATE_FILE : `${USER_DATA_DIR}/${id}/state.json`;
+}
+
 // ==================== 浏览器管理 ====================
 
-async function getBrowser() {
+async function getBrowser(accountId = currentAccountId) {
+  // 账号切换：先关闭旧账号的浏览器会话，防止 cookie 串号
+  if (accountId !== currentAccountId) {
+    console.error(`[账号] 切换账号: ${currentAccountId} -> ${accountId}`);
+    await closeBrowser();
+    currentAccountId = accountId;
+  }
+
   // 检查当前浏览器/页面是否仍然可用
   try {
     if (browser && browser.isConnected() && page && !page.isClosed()) {
@@ -72,22 +119,26 @@ async function getBrowser() {
     ],
   };
 
+  const profileDir = accountProfileDir(currentAccountId);
+  console.error(`[账号] 当前账号: ${currentAccountId}，登录态文件: ${accountStorageFile(currentAccountId)}`);
+
   // 优先使用系统 Chrome/Edge（无需下载 Playwright 浏览器）
   if (SYSTEM_CHROME) {
     console.error(`[浏览器] 使用系统 ${SYSTEM_CHROME} 浏览器`);
     launchOptions.channel = SYSTEM_CHROME;
     browser = await chromium.launch(launchOptions);
-    // 加载持久化的登录状态
+    // 加载当前账号的持久化登录状态
     const state = loadStorageState();
-    context = await browser.newContext({
+    const ctx = await browser.newContext({
       viewport: { width: 1280, height: 900 },
       storageState: state || undefined,
     });
-    // 定期保存登录状态
-    context.on("close", () => saveStorageState(context));
+    context = ctx;
+    // 上下文关闭时保存登录状态到当前账号（捕获 ctx，避免 close 时 context 已被重置为 null）
+    ctx.on("close", () => saveStorageState(ctx));
   } else {
     console.error("[浏览器] 使用 Playwright 内置 Chromium（需预装）");
-    browser = await chromium.launchPersistentContext(USER_DATA_DIR, {
+    browser = await chromium.launchPersistentContext(profileDir, {
       ...launchOptions,
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -108,8 +159,9 @@ async function getBrowser() {
 
 function loadStorageState() {
   try {
-    if (fs.existsSync(STORAGE_STATE_FILE)) {
-      return JSON.parse(fs.readFileSync(STORAGE_STATE_FILE, "utf-8"));
+    const file = accountStorageFile(currentAccountId);
+    if (fs.existsSync(file)) {
+      return JSON.parse(fs.readFileSync(file, "utf-8"));
     }
   } catch {}
   return null;
@@ -118,8 +170,9 @@ function loadStorageState() {
 async function saveStorageState(ctx) {
   try {
     const state = await ctx.storageState();
-    fs.mkdirSync(USER_DATA_DIR, { recursive: true });
-    fs.writeFileSync(STORAGE_STATE_FILE, JSON.stringify(state));
+    const dir = accountProfileDir(currentAccountId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(accountStorageFile(currentAccountId), JSON.stringify(state));
   } catch (e) {
     console.error("[浏览器] 保存登录状态失败:", e.message);
   }
@@ -163,21 +216,77 @@ async function checkLogin() {
     const loggedIn = (!loginVisible) || (userCount > 0);
 
     if (loggedIn) {
-      // 登录成功后立即保存状态，确保持久化
+      // 登录成功后立即保存状态到当前账号，确保持久化
       try {
-        const state = await context.storageState();
-        fs.mkdirSync(USER_DATA_DIR, { recursive: true });
-        fs.writeFileSync(STORAGE_STATE_FILE, JSON.stringify(state));
-        console.error("[猎聘] 登录状态已保存");
+        await saveStorageState(context);
+        console.error(`[猎聘] 登录状态已保存到账号 ${currentAccountId}`);
       } catch (e) {
         console.error("[猎聘] 保存登录状态失败:", e.message);
       }
-      return { loggedIn: true, nickname: "已登录用户" };
+      return { loggedIn: true, accountId: currentAccountId, nickname: "已登录用户" };
     }
-    return { loggedIn: false, message: "未登录，请在浏览器中扫码登录猎聘" };
+    return { loggedIn: false, accountId: currentAccountId, message: "未登录，请在浏览器中扫码登录猎聘" };
   } catch (e) {
-    return { loggedIn: false, error: e.message };
+    return { loggedIn: false, accountId: currentAccountId, error: e.message };
   }
+}
+
+// ==================== 工具：账号管理 ====================
+
+/** 列出已配置账号及其登录状态 */
+async function listAccounts() {
+  loadAccounts();
+  const list = [];
+
+  // default 账号（沿用旧 liepin-profile 的登录态，无需扫码重新登录）
+  list.push({
+    id: DEFAULT_ACCOUNT,
+    name: "默认账号",
+    isDefault: true,
+    loggedIn: fs.existsSync(STORAGE_STATE_FILE),
+  });
+
+  for (const a of accounts) {
+    if (a.id === DEFAULT_ACCOUNT) continue;
+    list.push({
+      id: a.id,
+      name: a.name || a.id,
+      isDefault: false,
+      loggedIn: fs.existsSync(accountStorageFile(a.id)),
+    });
+  }
+
+  return { current: currentAccountId, accounts: list };
+}
+
+/** 切换投递账号：关闭旧会话 → 打开目标账号会话 → 检查/扫码登录 */
+async function switchAccount({ accountId }) {
+  const id = (accountId || "").trim();
+  if (!id) {
+    return { error: "NO_ACCOUNT_ID", message: "请指定要切换的账号 accountId，可用账号见 liepin_list_accounts" };
+  }
+
+  loadAccounts();
+  const known = accounts.some((a) => a.id === id) || id === DEFAULT_ACCOUNT;
+  if (!known) {
+    return {
+      error: "UNKNOWN_ACCOUNT",
+      message: `账号「${id}」不在 accounts.json 中，可用账号: ${[DEFAULT_ACCOUNT, ...accounts.map((a) => a.id)].join(", ")}`,
+    };
+  }
+
+  // 已在目标账号：无需重建浏览器，直接确认登录态
+  if (id === currentAccountId) {
+    const result = await checkLogin();
+    return { switched: false, ...result };
+  }
+
+  // 切换账号：关闭旧会话，防止 cookie 串号
+  console.error(`[账号] 切换: ${currentAccountId} -> ${id}`);
+  await closeBrowser();
+  currentAccountId = id;
+  const result = await checkLogin(); // 会按新账号重建上下文；未登录则弹浏览器供扫码，扫完自动存进该账号
+  return { switched: true, ...result };
 }
 
 // ==================== 工具：搜索岗位 ====================
@@ -186,8 +295,9 @@ async function searchJobs({ keyword, city = "", salary = "", pageNum = 1 }) {
   await getBrowser();
 
   try {
-    // 第一步：只用关键词搜索（不用城市参数，URL编码不可靠）
-    const searchUrl = buildSearchUrl(keyword, "", salary, pageNum);
+    // 第一步：关键词 + 城市一起放 URL。
+    // 已知城市有编码（CITY_MAP）走 URL 的 dqs 参数，比页面点击筛选器稳定得多。
+    const searchUrl = buildSearchUrl(keyword, city, salary, pageNum);
     console.error(`[猎聘搜索] 搜索URL: ${searchUrl} 城市=${city}`);
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: DEFAULT_TIMEOUT });
     await page.waitForTimeout(3000);
@@ -217,19 +327,25 @@ async function searchJobs({ keyword, city = "", salary = "", pageNum = 1 }) {
       }
     }
 
-    // 第二步：在页面上点击城市筛选器选择目标城市
+    // 第二步：城市筛选 —— 只有城市没有编码（CITY_MAP 里没有）时才回退到页面点击筛选器
     if (city && typeof city === "string" && city.trim()) {
-      const citySelected = await selectCityOnPage(city.trim());
-      if (citySelected) {
-        console.error(`[猎聘搜索] 城市筛选「${city}」已应用`);
-        await page.waitForTimeout(2000); // 等结果刷新
+      const c = city.trim();
+      const known = Object.prototype.hasOwnProperty.call(CITY_MAP, c);
+      if (known) {
+        console.error(`[猎聘搜索] 城市「${c}」已通过 URL 参数生效（dqs=${CITY_MAP[c]}）`);
       } else {
-        console.error(`[猎聘搜索] 城市筛选「${city}」失败，显示全国结果`);
+        const citySelected = await selectCityOnPage(c);
+        if (citySelected) {
+          console.error(`[猎聘搜索] 城市筛选「${c}」已应用`);
+          await page.waitForTimeout(2000); // 等结果刷新
+        } else {
+          console.error(`[猎聘搜索] 城市筛选「${c}」失败，显示全国结果`);
+        }
       }
     }
 
     // 截图调试
-    try { await page.screenshot({ path: "./debug-search.png" }); } catch {}
+    try { await page.screenshot({ path: path.join(__dirname, "debug-search.png") }); } catch {}
 
     // 检查登录状态
     currentUrl = page.url();
@@ -237,23 +353,56 @@ async function searchJobs({ keyword, city = "", salary = "", pageNum = 1 }) {
       return { error: "NOT_LOGGED_IN", message: "需要登录猎聘，请先扫码登录" };
     }
 
-    // 提取岗位信息
+    // 提取岗位信息 —— 优先从主搜索结果列表容器抓链接，避免推荐位/导航混入全国岗位
     const jobs = await page.evaluate(() => {
       const results = [];
-      const allLinks = document.querySelectorAll("a[href]");
       const seen = new Set();
 
-      for (const a of allLinks) {
+      // 定位主搜索结果列表容器（按命中优先级）
+      const listSelectors = [
+        "[class*='job-list']", "[class*='job-card']", "[class*='search-list']",
+        "[class*='sojob-list']", "[class*='list-box']", "[class*='result-list']",
+        "[class*='jobInfo']", "[class*='job-box']",
+      ];
+      let listEl = null;
+      for (const sel of listSelectors) {
+        for (const el of document.querySelectorAll(sel)) {
+          if (el.offsetHeight > 0 && el.querySelector("a[href*='/job/'], a[href*='/a/']")) {
+            listEl = el;
+            break;
+          }
+        }
+        if (listEl) break;
+      }
+
+      // 容器内的链接优先；无容器时回退全页，但排除祖先含「推荐/相关/看了/热门」的元素
+      const anchors = listEl
+        ? Array.from(listEl.querySelectorAll("a[href]"))
+        : Array.from(document.querySelectorAll("a[href]")).filter((a) => {
+            let n = a.parentElement;
+            while (n && n !== document.body) {
+              const t = (n.textContent || "").trim();
+              if (/推荐职位|看了该职位|相关职位|热门职位|为你推荐|更多职位|招聘专场/.test(t)) return false;
+              n = n.parentElement;
+            }
+            return true;
+          });
+
+      for (const a of anchors) {
         const href = a.href;
         if (!href.includes("liepin.com")) continue;
-        if (!(href.includes("/job/") || href.includes("/a/") || href.includes("lpt") || href.includes("detail"))) continue;
+        // 只保留岗位详情链接；去掉 "lpt" —— lpt.liepin.com 是招聘方入口域名，
+        // 「我要招人」等导航链接指向它，会被误当成岗位。
+        if (!(href.includes("/job/") || href.includes("/a/") || href.includes("detail"))) continue;
         if (seen.has(href)) continue;
         seen.add(href);
 
         const title = (a.textContent || "").replace(/\s+/g, " ").trim();
         if (!title || title.length < 4 || title.length > 80) continue;
-        if (/^(登录|注册|首页|职位|校园|海归|APP|更多|不限|清空|订阅|扫一扫|验证码)$/.test(title)) continue;
+        if (/^(登录|注册|首页|职位|校园|海归|APP|更多|不限|清空|订阅|扫一扫|验证码|查看全部)$/.test(title)) continue;
         if (/^(\d|公司|城市|行业|学历|薪资|经验|区域|热门|推荐|相关|周边|其他|当前位置)/.test(title)) continue;
+        // 排除招聘方入口/广告类链接
+        if (/我要招人|发布职位|进入招聘|免费发布|我要招聘|招聘顾问|猎头服务/.test(title)) continue;
 
         let card = a.closest("li, [class*='job'], div[class*='card'], div[class*='item'], tr");
         const cardText = (card ? card.textContent : a.parentElement.textContent) || "";
@@ -283,7 +432,7 @@ async function searchJobs({ keyword, city = "", salary = "", pageNum = 1 }) {
     return { jobs, total: jobs.length, keyword, city };
   } catch (e) {
     console.error(`[猎聘搜索] 异常: ${e.message}`);
-    try { await page.screenshot({ path: "./debug-search-error.png" }); } catch {}
+    try { await page.screenshot({ path: path.join(__dirname, "debug-search-error.png") }); } catch {}
     return { error: e.message, jobs: [], total: 0 };
   }
 }
@@ -361,7 +510,7 @@ async function selectCityOnPage(targetCity) {
     if (!cityClicked) {
       console.error(`[猎聘搜索] 在城市面板中未找到「${targetCity}」`);
       // 截图查看城市面板
-      try { await page.screenshot({ path: "./debug-city-panel.png" }); } catch {}
+      try { await page.screenshot({ path: path.join(__dirname, "debug-city-panel.png") }); } catch {}
       return false;
     }
 
@@ -382,16 +531,17 @@ function buildSearchUrl(keyword, city, salary, pageNum) {
   return `${BASE_URL}/zhaopin/?${params.toString()}`;
 }
 
+/** 猎聘城市编码（常用城市映射） */
+const CITY_MAP = {
+  "北京": "010", "上海": "020", "广州": "050", "深圳": "060",
+  "杭州": "080", "成都": "090", "南京": "070", "武汉": "170",
+  "西安": "200", "苏州": "120", "重庆": "040", "长沙": "190",
+  "天津": "030", "郑州": "180", "东莞": "100", "青岛": "160",
+  "合肥": "150", "厦门": "110", "大连": "140", "宁波": "130",
+};
+
 function encodeCity(city) {
-  // 猎聘城市编码（常用城市映射）
-  const cityMap = {
-    "北京": "010", "上海": "020", "广州": "050", "深圳": "060",
-    "杭州": "080", "成都": "090", "南京": "070", "武汉": "170",
-    "西安": "200", "苏州": "120", "重庆": "040", "长沙": "190",
-    "天津": "030", "郑州": "180", "东莞": "100", "青岛": "160",
-    "合肥": "150", "厦门": "110", "大连": "140", "宁波": "130",
-  };
-  return cityMap[city] || city;
+  return CITY_MAP[city] || city;
 }
 
 // ==================== 工具：获取岗位详情 ====================
@@ -413,20 +563,22 @@ async function getJobDetail({ url }) {
         ".job-requirements, [class*='require'], .job-qualifications"
       );
 
-      // 查找"立即沟通"按钮（猎聘通过聊天投递）
-      const chatBtn = document.querySelector(
-        "button:has-text('立即沟通'), a:has-text('立即沟通'), button:has-text('沟通'), [class*='chat-btn'], [class*='im-btn']"
-      );
-
       return {
         title: title ? title.textContent.trim() : "",
         company: company ? company.textContent.trim() : "",
         salary: salary ? salary.textContent.trim() : "",
         description: desc ? desc.textContent.trim() : "",
         requirements: requirements ? requirements.textContent.trim() : "",
-        chatBtnExists: !!chatBtn,
       };
     });
+
+    // 用 Playwright locator 检测沟通按钮（:has-text 在浏览器 evaluate 里无效，必须放这里）
+    const chatBtnExists = await page
+      .locator("button:has-text('立即沟通'), button:has-text('沟通'), a:has-text('立即沟通')")
+      .count()
+      .then((c) => c > 0)
+      .catch(() => false);
+    detail.chatBtnExists = chatBtnExists;
 
     return detail;
   } catch (e) {
@@ -459,190 +611,320 @@ async function applyJob({ url, resumeText = "" }) {
       return { success: false, error: "NOT_LOGGED_IN", message: "需要登录猎聘，请先在浏览器中扫码" };
     }
 
-    await page.screenshot({ path: "./debug-apply-page.png" });
+    // 2.5 岗位可能已暂停招聘（页面显示「该职位已暂停招聘」）
+    const paused = await page
+      .getByText("该职位已暂停招聘", { exact: false })
+      .first()
+      .isVisible()
+      .catch(() => false);
+    if (paused) {
+      return { success: false, error: "JOB_PAUSED", message: "该职位已暂停招聘，无法投递" };
+    }
 
-    // 3. 先尝试直接找「发简历」（如果已经是聊天页）
-    let resumeSent = await clickResumeDelivery();
+    await page.screenshot({ path: path.join(__dirname, "debug-apply-page.png") });
 
-    // 4. 如果没找到，点击「立即沟通」打开聊天，再找「发简历」
-    if (!resumeSent) {
-      console.error("[猎聘投递] 当前页面未找到发简历按钮，尝试先点击立即沟通...");
-      const chatOpened = await clickChatButton();
-      if (chatOpened) {
-        await page.waitForTimeout(4000);
-        await page.screenshot({ path: "./debug-chat-panel.png" });
+    // 点击「发简历」→ 等待反馈 → 只有明确 success 才判成功，其余一律失败
+    const tryDeliver = async () => {
+      const clicked = await clickResumeDelivery();
+      if (!clicked.clicked) return { clicked: false };
 
-        // 重试 3 次（聊天面板可能异步渲染）
-        for (let attempt = 0; attempt < 3; attempt++) {
-          resumeSent = await clickResumeDelivery();
-          if (resumeSent) break;
-          await page.waitForTimeout(1500);
+      // 先查结果；只有 unknown（没弹成功/失败提示）时，才可能是有「选择附件简历 → 立即投递」
+      // 确认弹窗没点。IM 流程里 clickResumeDelivery 内部已点过确认按钮，这里若结果已明确就绝不重复点，
+      // 避免二次投递。
+      const settle = async () => {
+        await page.waitForTimeout(2000);
+        return checkDeliveryResult();
+      };
+
+      let r = await settle();
+      if (r.status !== "unknown") return { clicked: true, result: r };
+
+      // unknown：点掉确认弹窗（若有），再查一次
+      await clickConfirmIfPresent();
+      r = await settle();
+      if (r.status !== "unknown") return { clicked: true, result: r };
+
+      // 仍 unknown：弹窗可能渲染慢，再确认一次，然后等 toast / 按钮状态变化
+      await page.waitForTimeout(1000);
+      await clickConfirmIfPresent();
+      r = await settle();
+      if (r.status !== "unknown") return { clicked: true, result: r };
+
+      const buttonState = await page.evaluate(() => {
+        const els = document.querySelectorAll("button, a, span, div");
+        for (const el of els) {
+          const t = (el.textContent || "").trim();
+          if (/已投递|已发送|投递成功|简历已投递/.test(t) && el.offsetHeight > 0) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight * 0.35) {
+              return t;
+            }
+          }
         }
+        return "";
+      });
+      if (buttonState) {
+        return { clicked: true, result: { status: "success", message: `按钮状态已变为「${buttonState}」` } };
+      }
+      // 点了投递但始终无明确反馈 → 判定为无法确认成功（不乐观判成功）
+      return { clicked: true, result: { status: "unknown", message: "已点击投递但未检测到成功/失败反馈" } };
+    };
+    const confirmSuccess = (r) => r.status === "success";
+    const confirmFail = (r) => r.status === "fail";
+
+    // 3. 先尝试直接投递（如果已经是聊天页）
+    let attempt = await tryDeliver();
+    if (attempt.clicked && confirmSuccess(attempt.result)) {
+      return { success: true, ...attempt.result };
+    }
+    if (attempt.clicked && confirmFail(attempt.result)) {
+      await page.screenshot({ path: path.join(__dirname, "debug-delivery-fail.png") });
+      return { success: false, ...attempt.result };
+    }
+    // clicked 但 unknown：可能点到非投递元素，降级走「立即沟通」完整流程
+    if (!attempt.clicked) {
+      await dumpInteractiveElements("打开岗位后未找到发简历按钮");
+    }
+    console.error("[猎聘投递] 直接投递未确认成功，尝试进入聊天流程...");
+
+    // 4. 点击「立即沟通」打开聊天面板，再找「发简历」
+    const chatOpened = await clickChatButton();
+    if (chatOpened) {
+      await page.waitForTimeout(4000);
+      await page.screenshot({ path: path.join(__dirname, "debug-chat-panel.png") });
+
+      // 重试 3 次（聊天面板可能异步渲染）
+      for (let i = 0; i < 3; i++) {
+        const retry = await tryDeliver();
+        if (retry.clicked && confirmSuccess(retry.result)) {
+          return { success: true, ...retry.result };
+        }
+        if (retry.clicked && confirmFail(retry.result)) {
+          await page.screenshot({ path: path.join(__dirname, "debug-delivery-fail.png") });
+          return { success: false, ...retry.result };
+        }
+        await page.waitForTimeout(1500);
       }
     }
 
-    if (!resumeSent) {
-      await page.screenshot({ path: "./debug-no-resume-delivery.png" });
-      return { success: false, error: "NO_RESUME_DELIVERY", message: "未找到「发简历」按钮，页面布局可能与预期不同" };
-    }
-
-    // 5. 等待发送完成（猎聘用自己的平台简历，无需额外操作）
-    await page.waitForTimeout(2000);
-
-    // 6. 检查结果
-    const result = await checkDeliveryResult();
-    return result;
+    // 5. 仍无法确认成功 → 明确失败（不再乐观判成功）
+    await dumpInteractiveElements("聊天流程后仍未找到发简历按钮");
+    await page.screenshot({ path: path.join(__dirname, "debug-no-resume-delivery.png") });
+    return {
+      success: false,
+      error: "NO_RESUME_DELIVERY",
+      message: "未找到并确认「发简历」发送成功，页面布局可能变化，已截图 debug-no-resume-delivery.png",
+    };
   } catch (e) {
     console.error(`[猎聘投递] 异常: ${e.message}`);
     return { success: false, error: e.message };
   }
 }
 
+/**
+ * 诊断辅助：把当前页面的 URL、标题和所有可见可点击元素（含关键词匹配）输出到 stderr。
+ * 用于定位猎聘真实页面上的投递/沟通按钮文本 —— 因为截图无法直接判读，只能靠 DOM dump。
+ */
+async function dumpInteractiveElements(reason) {
+  try {
+    const info = await page.evaluate(() => {
+      const isVisible = (el) => {
+        if (el.offsetHeight <= 0) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const norm = (s) => (s || "").replace(/\s+/g, " ").trim().substring(0, 60);
+
+      // ① 所有 button / a / role=button / class 含 btn/deliver/apply/chat 的可点击元素
+      const clickables = [];
+      const seen = new Set();
+      for (const el of document.querySelectorAll(
+        "button, a, [role='button'], [class*='btn'], [class*='deliver'], [class*='apply'], [class*='chat']"
+      )) {
+        const text = norm(el.textContent);
+        if (!text || text.length < 2 || !isVisible(el)) continue;
+        const r = el.getBoundingClientRect();
+        const key = `${el.tagName}|${text}|${Math.round(r.top)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        clickables.push({
+          tag: el.tagName.toLowerCase(),
+          text,
+          role: el.getAttribute("role") || "",
+          cls: norm(typeof el.className === "string" ? el.className : ""),
+          top: Math.round(r.top),
+        });
+      }
+
+      // ② 含「简历/投递/沟通/应聘/申请」关键词的可见元素（短文本）
+      const keywords = [];
+      for (const el of document.querySelectorAll("button, a, span, div, li, [role='button']")) {
+        const text = norm(el.textContent);
+        if (!text || text.length > 30 || !isVisible(el)) continue;
+        if (!/简历|投递|沟通|应聘|申请|聊一聊/.test(text)) continue;
+        const r = el.getBoundingClientRect();
+        keywords.push({ tag: el.tagName.toLowerCase(), text, top: Math.round(r.top) });
+      }
+
+      return { url: location.href, title: document.title, clickables, keywords };
+    }).catch(() => null);
+
+    if (!info) {
+      console.error(`[DOM-DUMP] ${reason}: 页面 evaluate 失败`);
+      return;
+    }
+    console.error(`[DOM-DUMP] ${reason} | url=${info.url} | title=${info.title}`);
+    console.error(`[DOM-DUMP] 可点击元素(${info.clickables.length}): ${JSON.stringify(info.clickables.slice(0, 25))}`);
+    console.error(`[DOM-DUMP] 含关键词元素(${info.keywords.length}): ${JSON.stringify(info.keywords.slice(0, 30))}`);
+  } catch (e) {
+    console.error(`[DOM-DUMP] ${reason}: ${e.message}`);
+  }
+}
+
 /** 点击「立即沟通」按钮打开聊天面板（岗位详情页 → 聊天） */
 async function clickChatButton() {
-  return await page.evaluate(() => {
-    const selectors = [
-      "button:has-text('立即沟通')",
-      "a:has-text('立即沟通')",
-      "button:has-text('沟通')",
-      "span:has-text('立即沟通')",
-      "[class*='chat-btn']",
-      "[class*='im-btn']",
-      ".btn-chat",
-      ".btn-communication",
-      "button:has-text('聊一聊')",
-      "button:has-text('在线沟通')",
-    ];
-    for (const sel of selectors) {
-      try {
-        const btn = document.querySelector(sel);
-        if (btn && btn.offsetHeight > 0) {
-          btn.click();
+  // 详情页聊天按钮有两种文案：btn-main 的「继续聊」或「聊一聊」，以及左侧「继续聊」(btn-chat)
+  const keywords = ["继续聊", "聊一聊", "立即沟通", "在线沟通"];
+  for (const kw of keywords) {
+    for (const role of ["button", "link"]) {
+      const loc = page.getByRole(role, { name: kw });
+      const count = await loc.count().catch(() => 0);
+      for (let i = 0; i < count; i++) {
+        const el = loc.nth(i);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        try {
+          await el.click({ timeout: 3000 });
+          console.error(`[沟通] 已点击 <${role}>「${kw}」`);
           return true;
-        }
-      } catch (e) { /* continue */ }
-    }
-    // fallback: 搜索包含"沟通"的可点击元素
-    const allEls = document.querySelectorAll("button, a, span, div[class*='btn']");
-    for (const el of allEls) {
-      if (el.textContent && el.textContent.includes("沟通") && el.offsetHeight > 0) {
-        el.click();
-        return true;
+        } catch (e) {}
       }
     }
-    return false;
-  });
+  }
+  console.error("[沟通] 未找到「立即沟通」按钮");
+  return false;
+}
+
+/**
+ * 点击投递确认弹窗里的确认按钮。
+ *
+ * 猎聘点「投简历」/「发简历」后，常弹出「选择附件简历」对话框，
+ * 底部是「立即投递」确认按钮（DOM dump 里 button top=516）。必须点它才算真正投递。
+ * 找不到弹窗时静默返回 false，不影响主流程。
+ */
+async function clickConfirmIfPresent() {
+  const confirmKeywords = ["立即投递", "确认投递", "确定投递", "确认"];
+  for (const kw of confirmKeywords) {
+    // 优先 button / link；「确认」太宽泛，只在弹窗容器内找，避免误点
+    for (const role of ["button", "link"]) {
+      const loc = page.getByRole(role, { name: kw });
+      const count = await loc.count().catch(() => 0);
+      for (let i = 0; i < count; i++) {
+        const el = loc.nth(i);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        // 「确认」关键字过宽，限定在弹窗/对话框容器内
+        if (kw === "确认" && !(await insideDialog(el))) continue;
+        try {
+          await el.click({ timeout: 3000 });
+          console.error(`[发简历] 已点击确认弹窗按钮 <${role}>「${kw}」`);
+          return true;
+        } catch (e) {}
+      }
+    }
+  }
+  return false;
+}
+
+/** 判断元素是否位于弹窗/对话框容器内（用于限定「确认」这类宽泛按钮） */
+async function insideDialog(el) {
+  return await el
+    .evaluate((node) => {
+      let n = node;
+      while (n && n !== document.body) {
+        const cls = (n.className && typeof n.className === "string" ? n.className : "") || "";
+        if (/dialog|modal|popup|ant-modal|ant-drawer|confirm/.test(cls)) return true;
+        n = n.parentElement;
+      }
+      return false;
+    })
+    .catch(() => false);
 }
 
 /**
  * 点击聊天页顶部的「简历投递」按钮。
  *
- * 猎聘聊天页（IM页面）布局：
- * ┌──────────────────────────────┐
- * │  ← 返回    招聘顾问名称       │
- * │  岗位名称                     │
- * │  [简历投递] [常用语] ...      │  ← 顶部工具栏
- * ├──────────────────────────────┤
- * │                              │
- * │    聊天消息区域               │
- * │                              │
- * ├──────────────────────────────┤
- * │ [输入框________________] [发送]│
- * └──────────────────────────────┘
+ * 精确定位策略（Playwright locator 层，`:has-text`/getByRole 才真正生效；
+ * 浏览器原生 evaluate 里的 :has-text 是无效选择器，会导致找不到真按钮）：
+ *   1. 先用 getByRole 按 accessible-name 找 button/link（substring 匹配）
+ *   2. 兜底用 getByText，但限定页面顶部工具栏区域，避免点到导航/菜单/推荐卡片
+ *   3. 只点可见元素，返回被点击元素的信息，供上层验证是否真投递成功
  */
 async function clickResumeDelivery() {
-  return await page.evaluate(() => {
-    // 优先精确匹配：聊天页顶部工具栏的「发简历」/「简历投递」
-    const primarySelectors = [
-      "button:has-text('发简历')",
-      "span:has-text('发简历')",
-      "a:has-text('发简历')",
-      "div:has-text('发简历')",
-      "button:has-text('简历投递')",
-      "span:has-text('简历投递')",
-      "a:has-text('简历投递')",
-      "div:has-text('简历投递')",
-      "button:has-text('投递简历')",
-      "span:has-text('投递简历')",
-      "button:has-text('发送简历')",
-      "span:has-text('发送简历')",
-      "[class*='resume-delivery']",
-      "[class*='resumeDelivery']",
-      "[class*='send-resume']",
-      "[class*='sendResume']",
-    ];
-    for (const sel of primarySelectors) {
-      try {
-        const el = document.querySelector(sel);
-        if (el && el.offsetHeight > 0) {
-          el.click();
-          return true;
-        }
-      } catch (e) { /* continue */ }
-    }
+  // 详情页投递按钮是「投简历」，IM 聊天窗口里的是「发简历」，两者都要覆盖
+  const keywords = ["投简历", "发简历", "简历投递", "投递简历", "发送简历", "立即投递"];
 
-    // fallback: 扫描页面顶部区域中所有含「发简历」「简历投递」「投递简历」的元素
-    const keywords = ["发简历", "简历投递", "投递简历", "发送简历"];
-    const allElements = document.querySelectorAll("button, span, a, div, li");
-    for (const el of allElements) {
-      if (!el.textContent || el.offsetHeight <= 0) continue;
-      const text = el.textContent.trim();
-      if (keywords.some(k => text.includes(k))) {
-        const rect = el.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight * 0.5) {
-          el.click();
-          return true;
-        }
+  // ① 岗位详情页投递区（.job-apply-container / .apply-box）内的按钮 —— 详情页投递主按钮是「投简历」
+  const applyZones = page.locator(".job-apply-container, .apply-box, [class*='job-apply']");
+  const zoneCount = await applyZones.count().catch(() => 0);
+  for (let z = 0; z < zoneCount; z++) {
+    for (const kw of keywords) {
+      const inner = applyZones.nth(z).getByText(kw, { exact: false });
+      const c = await inner.count().catch(() => 0);
+      for (let i = 0; i < c; i++) {
+        const el = inner.nth(i);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        try {
+          await el.click({ timeout: 3000 });
+          console.error(`[发简历] 详情页投递区已点击「${kw}」`);
+          return { clicked: true, text: kw, role: "job-apply" };
+        } catch (e) {}
       }
     }
+  }
 
-    // 兜底1：扫描 title / aria-label 属性
-    const attrEls = document.querySelectorAll("[title*='简历'], [title*='发简历'], [aria-label*='简历'], [aria-label*='发简历']");
-    for (const el of attrEls) {
-      if (el.offsetHeight > 0) {
-        const rect = el.getBoundingClientRect();
-        if (rect.width > 0 && rect.top < window.innerHeight * 0.6) {
-          el.click();
-          return true;
-        }
+  // ② IM 聊天弹窗内的动作按钮（.chatwin-action / im-ui-basic-chat）—— 聊天窗口底部的「发简历」
+  const imZones = page.locator(
+    ".ant-im-modal-wrap, .im-ui-basic-chat-wrapper, .chatwin-action, [class*='im-ui-chat-input']"
+  );
+  const imCount = await imZones.count().catch(() => 0);
+  for (let z = 0; z < imCount; z++) {
+    for (const kw of keywords) {
+      const inner = imZones.nth(z).getByText(kw, { exact: false });
+      const c = await inner.count().catch(() => 0);
+      for (let i = 0; i < c; i++) {
+        const el = inner.nth(i);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        try {
+          await el.click({ timeout: 3000 });
+          console.error(`[发简历] IM窗口已点击「${kw}」`);
+          return { clicked: true, text: kw, role: "im" };
+        } catch (e) {}
       }
     }
+  }
 
-    // 兜底2：聊天工具栏中任何含「简历」文字的元素（放宽到全页60%区域）
-    const allEls = document.querySelectorAll("button, span, a, div, li, i, em, svg, img");
-    for (const el of allEls) {
-      const text = (el.textContent || el.getAttribute("title") || el.getAttribute("aria-label") || "").trim();
-      if (text && (text.includes("简历") || text.includes("发简历")) && el.offsetHeight > 0) {
-        const rect = el.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight * 0.6) {
-          el.click();
-          return true;
-        }
+  // ③ 全页兜底：button / link（区域放宽到 60%，之前 35% 把 IM 弹窗里的按钮挡掉了）
+  const innerHeight = await page.evaluate(() => window.innerHeight).catch(() => 900);
+  const region = Math.floor(innerHeight * 0.6);
+  for (const role of ["button", "link"]) {
+    for (const kw of keywords) {
+      const loc = page.getByRole(role, { name: kw });
+      const count = await loc.count().catch(() => 0);
+      for (let i = 0; i < count; i++) {
+        const el = loc.nth(i);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        const box = await el.boundingBox().catch(() => null);
+        if (box && box.y > region) continue;
+        try {
+          await el.click({ timeout: 3000 });
+          console.error(`[发简历] 全页已点击 <${role}>「${kw}」`);
+          return { clicked: true, text: kw, role };
+        } catch (e) {}
       }
     }
+  }
 
-    // 兜底3：查找所有可见元素，打印前20个含"简历"的用于调试
-    const debugEls = [];
-    const allVisible = document.querySelectorAll("button, span, a, div, li, i");
-    for (const el of allVisible) {
-      const text = (el.textContent || "").trim();
-      if (text && text.includes("简历") && el.offsetHeight > 0) {
-        debugEls.push({
-          tag: el.tagName,
-          text: text.substring(0, 50),
-          class: el.className?.substring?.(0, 50) || "",
-          top: el.getBoundingClientRect().top,
-          visible: el.offsetHeight > 0,
-        });
-      }
-    }
-    if (debugEls.length > 0) {
-      console.error("[DEBUG] 页面中找到含'简历'的元素:", JSON.stringify(debugEls.slice(0, 20)));
-    } else {
-      console.error("[DEBUG] 页面中未找到任何含'简历'的可见元素");
-    }
-    return false;
-  });
+  console.error("[发简历] 未找到投递按钮（详情页无「投简历」，IM窗口无「发简历」）");
+  return { clicked: false };
 }
 
 /** 在聊天输入框中填写问候语并发送 */
@@ -711,28 +993,45 @@ async function fillAndSendMessage(resumeText) {
   }
 }
 
-/** 检查投递/简历发送结果（纯 JS，不依赖 Playwright 选择器语法） */
+/**
+ * 检查投递/简历发送结果。
+ *
+ * 废除「乐观判成功」：只认明确的成功/失败反馈（toast/弹窗/提示条）。
+ * 返回 { status: "success" | "fail" | "unknown", message }
+ *   - success : 明确出现成功提示
+ *   - fail    : 明确出现失败/受限提示
+ *   - unknown : 无明确反馈，不能确认投递成功（宁可漏报，不可误报）
+ *
+ * 扫描范围限定在反馈类元素（toast/tip/message/notice/dialog/modal/popup），
+ * 不再扫全页 —— 避免导航栏/历史投递记录里的"已投递"等文字造成假阳性。
+ */
 async function checkDeliveryResult() {
-  return await page.evaluate(() => {
-    const successKeywords = ["发送成功", "投递成功", "已发送", "简历已发送", "简历投递成功", "已投递"];
-    const failKeywords = ["发送失败", "投递失败", "今日沟通已达上限", "请完善简历", "简历不完整", "对方已设置"];
+  const successKeywords = ["发送成功", "投递成功", "已发送", "简历已发送", "简历投递成功", "投递已成功"];
+  const failKeywords = [
+    "发送失败", "投递失败", "今日沟通已达上限", "今日投递已达上限",
+    "请完善简历", "简历不完整", "对方已设置", "操作频繁", "频繁操作", "请先登录",
+  ];
 
-    // 扫描所有可见元素
-    const allEls = document.querySelectorAll("div, span, p, button, [class*='toast'], [class*='tip'], [class*='msg'], [class*='message']");
-    for (const el of allEls) {
+  const result = await page.evaluate(({ successKeywords, failKeywords }) => {
+    const regions = document.querySelectorAll(
+      "[class*='toast'], [class*='tip'], [class*='message'], [class*='notice'], " +
+      "[class*='dialog'], [class*='modal'], [class*='popup'], [class*='Msg'], [class*='Toast']"
+    );
+    for (const el of regions) {
       const text = (el.textContent || "").trim();
       if (!text) continue;
       for (const kw of successKeywords) {
-        if (text.includes(kw)) return { success: true, message: text.substring(0, 100) };
+        if (text.includes(kw)) return { status: "success", message: text.substring(0, 120) };
       }
       for (const kw of failKeywords) {
-        if (text.includes(kw)) return { success: false, message: text.substring(0, 100) };
+        if (text.includes(kw)) return { status: "fail", message: text.substring(0, 120) };
       }
     }
+    return null;
+  }, { successKeywords, failKeywords });
 
-    // 「发简历」已点击但无明确反馈 → 乐观认为成功
-    return { success: true, message: "简历发送请求已提交，等待对方查看" };
-  });
+  if (result) return result;
+  return { status: "unknown", message: "未检测到明确的投递成功/失败反馈，无法确认投递成功" };
 }
 
 /** 生成简短问候语（通用版） */
@@ -821,11 +1120,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "liepin_login_check",
       description:
-        "检查猎聘网登录状态。如果未登录，会打开浏览器窗口供用户扫码登录。在投递简历前必须先调用此工具确认登录状态。",
+        "检查猎聘网登录状态。如果未登录，会打开浏览器窗口供用户扫码登录。在投递简历前必须先调用此工具确认登录状态。作用于当前账号。",
       inputSchema: {
         type: "object",
         properties: {},
         required: [],
+      },
+    },
+    {
+      name: "liepin_list_accounts",
+      description:
+        "列出已配置的投递账号及其登录状态。多账号场景下，投递前应先调用此工具，让用户选择用哪个账号投递。返回每个账号的 id、名称、是否已登录，以及当前使用的账号。",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+    {
+      name: "liepin_switch_account",
+      description:
+        "切换投递账号。切换后所有搜索/投递操作都在该账号下进行。如果目标账号未登录，会打开浏览器供用户扫码登录，登录态会保存到该账号自己独立的文件里（账号间 cookie 隔离，不会串号）。投递前务必先确认已登录。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          accountId: {
+            type: "string",
+            description: "目标账号 id，取值见 liepin_list_accounts 返回结果",
+          },
+        },
+        required: ["accountId"],
       },
     },
     {
@@ -934,6 +1258,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "liepin_login_check":
         result = await checkLogin();
         break;
+      case "liepin_list_accounts":
+        result = await listAccounts();
+        break;
+      case "liepin_switch_account":
+        result = await switchAccount(args || {});
+        break;
       case "liepin_search_jobs":
         result = await searchJobs(args);
         break;
@@ -968,9 +1298,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ==================== 启动 ====================
 
 async function main() {
+  loadAccounts();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[猎聘MCP] Server 已启动，等待 Spring AI 连接...");
+  console.error(`[猎聘MCP] Server 已启动，等待 Spring AI 连接... 当前账号: ${currentAccountId}（配置 ${accounts.length} 个账号）`);
 }
 
 main().catch((e) => {
